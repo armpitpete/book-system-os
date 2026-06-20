@@ -1,0 +1,6 @@
+{
+  "domain": "publish.toiletrage.co.uk",
+  "root": "/opt/book-system",
+  "outputs": ["pdf-standard", "pdf-nd", "epub", "docx"],
+  "ai_enabled": false
+}

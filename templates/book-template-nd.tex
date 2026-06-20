@@ -1,9 +1,31 @@
-\documentclass{book}
+\documentclass[11pt,oneside]{book}
+
 \usepackage[a4paper,margin=1.2in]{geometry}
 \usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{bookmark}
+
 \setstretch{1.4}
 \setlength{\parskip}{1em}
 \setlength{\parindent}{0pt}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=black
+}
+
 \begin{document}
+$if(title)$
+\title{$title$}
+\maketitle
+$endif$
+
+$if(toc)$
+\tableofcontents
+\clearpage
+$endif$
+
 $body$
+
 \end{document}

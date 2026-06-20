@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from app.utils.paths import jobs_dir
+
+SAFE_TITLE_RE = re.compile(r"[^a-zA-Z0-9._ -]+")
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def slugify_title(title: str) -> str:
+    title = SAFE_TITLE_RE.sub("", title).strip().lower()
+    title = re.sub(r"\s+", "-", title)
+    return title[:80] or "untitled"
+
+
+def status_path(job_dir: Path) -> Path:
+    return job_dir / "status.json"
+
+
+def write_status(job_dir: Path, *, status: str, step: str, message: str = "") -> None:
+    old: dict[str, Any] = {}
+    path = status_path(job_dir)
+    if path.exists():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            old = {}
+
+    data = {
+        **old,
+        "status": status,
+        "step": step,
+        "message": message,
+        "updated_at": utc_now(),
+    }
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def read_status(job_dir: Path) -> dict[str, Any]:
+    path = status_path(job_dir)
+    if not path.exists():
+        return {"status": "unknown", "step": "missing-status", "message": "No status file"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"status": "broken", "step": "bad-status-json", "message": "Status file is invalid JSON"}
+
+
+def create_job(*, title: str, markdown: str) -> tuple[str, Path]:
+    job_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    job_dir = jobs_dir() / job_id
+    (job_dir / "input").mkdir(parents=True, exist_ok=False)
+    (job_dir / "work").mkdir(parents=True, exist_ok=True)
+    (job_dir / "output").mkdir(parents=True, exist_ok=True)
+    (job_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "job_id": job_id,
+        "title": title.strip() or "Untitled",
+        "slug": slugify_title(title),
+        "created_at": utc_now(),
+    }
+    (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (job_dir / "input" / "book.md").write_text(markdown, encoding="utf-8")
+    write_status(job_dir, status="queued", step="waiting", message="Job queued")
+    return job_id, job_dir
+
+
+def list_jobs() -> list[Path]:
+    base = jobs_dir()
+    return sorted([p for p in base.iterdir() if p.is_dir()], reverse=True)
+
+
+def get_job(job_id: str) -> Path | None:
+    if "/" in job_id or "\\" in job_id or ".." in job_id:
+        return None
+    path = jobs_dir() / job_id
+    return path if path.exists() and path.is_dir() else None
+
+
+def queued_jobs() -> list[Path]:
+    jobs = []
+    for job in reversed(list_jobs()):
+        status = read_status(job)
+        if status.get("status") == "queued":
+            jobs.append(job)
+    return jobs

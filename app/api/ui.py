@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.api.auth import dashboard_auth
 from app.services.job_queue import create_job, get_job, list_jobs, read_status
@@ -97,7 +99,15 @@ def job_detail(job_id: str) -> HTMLResponse:
     output_items = []
     for item in sorted((job / "output").glob("*")):
         if item.is_file():
-            output_items.append(f"<li>{html.escape(item.name)}</li>")
+            safe_name = html.escape(item.name)
+            download_href = html.escape(
+                f"/jobs/{quote(job_id, safe='')}/output/{quote(item.name, safe='')}"
+            )
+            size = item.stat().st_size
+            output_items.append(
+                f'<li><a href="{download_href}">{safe_name}</a> '
+                f'<span class="muted">({size} bytes)</span></li>'
+            )
     if not output_items:
         output_items.append('<li class="muted">No outputs yet.</li>')
 
@@ -120,3 +130,33 @@ def job_detail(job_id: str) -> HTMLResponse:
       <div class="card"><h2>Outputs</h2><ul>{''.join(output_items)}</ul></div>
       <div class="card"><h2>Logs</h2><ul>{''.join(log_items)}</ul></div>
     """)
+
+
+@router.get("/jobs/{job_id}/output/{filename}")
+def download_output(job_id: str, filename: str) -> FileResponse:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if filename in {"", ".", ".."} or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if Path(filename).name != filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    output_dir = (job / "output").resolve()
+    file_path = (output_dir / filename).resolve()
+
+    try:
+        file_path.relative_to(output_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Output not found")
+
+    return FileResponse(
+        path=file_path,
+        filename=file_path.name,
+        media_type="application/octet-stream",
+    )

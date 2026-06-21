@@ -26,16 +26,18 @@ def page(title: str, body: str) -> HTMLResponse:
     main {{ max-width: 980px; margin: 0 auto; padding: 24px; }}
     h1, h2, h3 {{ line-height: 1.15; color: #ffffff; }}
     .card {{ background: #2b3137; border: 1px solid #3b424a; border-radius: 14px; padding: 18px; margin: 16px 0; box-shadow: 0 1px 6px rgba(0,0,0,.22); }}
-    textarea, input, select {{ width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #5a626b; border-radius: 10px; font: inherit; background: #f4f1e8; color: #20262c; }}
+    textarea, input, select {{ width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #4a535c; border-radius: 10px; font: inherit; background: #1f252b; color: #f4f1e8; }}
     textarea {{ min-height: 320px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }}
-    button, .button {{ display: inline-block; background: #f4f1e8; color: #20262c; border: 0; border-radius: 10px; padding: 10px 14px; text-decoration: none; font-weight: 650; cursor: pointer; }}
-    .secondary {{ background: #3b424a; color: #f4f1e8; }}
+    button, .button {{ display: inline-block; background: #3b424a; color: #f4f1e8; border: 1px solid #59636d; border-radius: 10px; padding: 10px 14px; text-decoration: none; font-weight: 650; cursor: pointer; }}
+    .secondary {{ background: #2b3137; color: #f4f1e8; border: 1px solid #59636d; }}
     .muted {{ color: #c6cbd2; }}
     .status {{ display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.9rem; background: #3b424a; color: #f4f1e8; }}
     .queued {{ background: #7a5d12; color: #fff7d6; }} .running {{ background: #1e4f7a; color: #dbeafe; }} .done {{ background: #166534; color: #dcfce7; }} .failed {{ background: #7f1d1d; color: #fee2e2; }}
     .state {{ display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.9rem; background: #3b424a; color: #f4f1e8; }}
     .state.production {{ background: #374151; color: #e9edf5; }} .state.test {{ background: #6b4f12; color: #fff7d6; }} .state.archived {{ background: #4b5563; color: #e5e7eb; }}
     code {{ background: #3b424a; color: #f4f1e8; padding: 2px 5px; border-radius: 5px; }}
+    ::placeholder {{ color: #aeb5bc; }}
+    option {{ background: #1f252b; color: #f4f1e8; }}
     a {{ color: #f4f1e8; }}
   </style>
 </head>

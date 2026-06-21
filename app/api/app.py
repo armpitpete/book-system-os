@@ -21,6 +21,32 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/v1/status")
+def api_v1_status() -> dict:
+    return {
+        "ok": True,
+        "gateway": "publish.toiletrage.co.uk",
+        "service": "book-system-os",
+        "version": app.version,
+        "routes_enabled": ["book-system"],
+        "write_enabled": True,
+        "implemented": [
+            "GET /health",
+            "GET /api/v1/status",
+            "POST /api/submit",
+            "GET /api/jobs/{job_id}",
+        ],
+        "not_yet_implemented": [
+            "POST /api/v1/validate",
+            "POST /api/v1/publish/dry-run",
+            "POST /api/v1/publish",
+            "GET /api/v1/publish/{publish_id}",
+            "GET /api/v1/publishes",
+            "POST /api/v1/publish/{publish_id}/retry",
+        ],
+    }
+
+
 @app.post("/api/submit", dependencies=[Depends(api_key_required)])
 def api_submit(payload: BookSubmitRequest) -> dict[str, str]:
     job_id, _ = create_job(title=payload.title, markdown=payload.content, state="production")

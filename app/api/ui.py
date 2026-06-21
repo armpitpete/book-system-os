@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.api.auth import dashboard_auth
@@ -26,12 +26,15 @@ def page(title: str, body: str) -> HTMLResponse:
     main {{ max-width: 980px; margin: 0 auto; padding: 24px; }}
     h1, h2, h3 {{ line-height: 1.15; }}
     .card {{ background: white; border: 1px solid #ddd9cc; border-radius: 14px; padding: 18px; margin: 16px 0; box-shadow: 0 1px 4px rgba(0,0,0,.04); }}
-    textarea, input {{ width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #bbb6a7; border-radius: 10px; font: inherit; }}
+    textarea, input, select {{ width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #bbb6a7; border-radius: 10px; font: inherit; }}
     textarea {{ min-height: 320px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }}
     button, .button {{ display: inline-block; background: #20262c; color: white; border: 0; border-radius: 10px; padding: 10px 14px; text-decoration: none; font-weight: 650; cursor: pointer; }}
+    .secondary {{ background: #efeee8; color: #20262c; }}
     .muted {{ color: #60656c; }}
     .status {{ display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.9rem; background: #eee; }}
     .queued {{ background: #fff2c2; }} .running {{ background: #dbeafe; }} .done {{ background: #dcfce7; }} .failed {{ background: #fee2e2; }}
+    .state {{ display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.9rem; background: #efeee8; }}
+    .state.production {{ background: #e9edf5; }} .state.test {{ background: #fff7d6; }} .state.archived {{ background: #e5e7eb; }}
     code {{ background: #efeee8; padding: 2px 5px; border-radius: 5px; }}
   </style>
 </head>
@@ -45,11 +48,45 @@ def status_badge(status: str) -> str:
     return f'<span class="status {cls}">{safe}</span>'
 
 
+def state_badge(state: str) -> str:
+    safe = html.escape(state or "production")
+    cls = safe if safe in {"test", "production", "archived"} else ""
+    return f'<span class="state {cls}">{safe}</span>'
+
+
+def truthy_query(value: str | None, *, default: bool) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "show"}
+
+
+def selected_attr(current: bool, option: bool) -> str:
+    return " selected" if current is option else ""
+
+
 @router.get("/", response_class=HTMLResponse)
-def dashboard() -> HTMLResponse:
+def dashboard(
+    show_test: str = Query("1"),
+    show_failed: str = Query("1"),
+    show_archived: str = Query("0"),
+) -> HTMLResponse:
+    show_test_bool = truthy_query(show_test, default=True)
+    show_failed_bool = truthy_query(show_failed, default=True)
+    show_archived_bool = truthy_query(show_archived, default=False)
+
     cards = []
-    for job in list_jobs()[:30]:
+    for job in list_jobs():
         status = read_status(job)
+        job_state = status.get("state", "production")
+        job_status = status.get("status", "unknown")
+
+        if job_state == "test" and not show_test_bool:
+            continue
+        if job_state == "archived" and not show_archived_bool:
+            continue
+        if job_status == "failed" and not show_failed_bool:
+            continue
+
         job_id = html.escape(job.name)
         meta_title = "Untitled"
         meta = job / "metadata.json"
@@ -61,13 +98,17 @@ def dashboard() -> HTMLResponse:
         cards.append(f"""
         <div class="card">
           <h3>{html.escape(meta_title)}</h3>
-          <p>{status_badge(status.get('status', 'unknown'))} <span class="muted">{job_id}</span></p>
-          <p class="muted">Step: {html.escape(status.get('step', 'unknown'))} — {html.escape(status.get('message', ''))}</p>
+          <p>{status_badge(job_status)} {state_badge(job_state)} <span class="muted">{job_id}</span></p>
+          <p class="muted">Step: {html.escape(status.get('step', 'unknown'))} &mdash; {html.escape(status.get('message', ''))}</p>
           <p><a class="button" href="/jobs/{job_id}">Open job</a></p>
         </div>
         """)
 
-    job_list = "\n".join(cards) if cards else '<p class="muted">No jobs yet.</p>'
+        if len(cards) >= 30:
+            break
+
+    job_list = "\n".join(cards) if cards else '<p class="muted">No jobs match the current filters.</p>'
+
     return page("Publishing Dashboard", f"""
       <h1>Publishing Dashboard</h1>
       <p class="muted">Domain target: <code>publish.toiletrage.co.uk</code></p>
@@ -79,7 +120,35 @@ def dashboard() -> HTMLResponse:
           <button type="submit">Queue book build</button>
         </form>
       </div>
+
+      <div class="card">
+        <h2>Job filters</h2>
+        <form method="get" action="/">
+          <p><label>Test jobs<br>
+            <select name="show_test">
+              <option value="1"{selected_attr(show_test_bool, True)}>Show</option>
+              <option value="0"{selected_attr(show_test_bool, False)}>Hide</option>
+            </select>
+          </label></p>
+          <p><label>Failed jobs<br>
+            <select name="show_failed">
+              <option value="1"{selected_attr(show_failed_bool, True)}>Show</option>
+              <option value="0"{selected_attr(show_failed_bool, False)}>Hide</option>
+            </select>
+          </label></p>
+          <p><label>Archived jobs<br>
+            <select name="show_archived">
+              <option value="0"{selected_attr(show_archived_bool, False)}>Hide</option>
+              <option value="1"{selected_attr(show_archived_bool, True)}>Show</option>
+            </select>
+          </label></p>
+          <button type="submit">Apply filters</button>
+          <a class="button secondary" href="/">Reset</a>
+        </form>
+      </div>
+
       <h2>Jobs</h2>
+      <p class="muted">Showing up to 30 jobs matching the current filters.</p>
       {job_list}
     """)
 
@@ -119,10 +188,10 @@ def job_detail(job_id: str) -> HTMLResponse:
         log_items.append('<li class="muted">No logs yet.</li>')
 
     return page("Job", f"""
-      <p><a href="/">← Back to dashboard</a></p>
+      <p><a href="/">&larr; Back to dashboard</a></p>
       <div class="card">
         <h1>Job {html.escape(job_id)}</h1>
-        <p>{status_badge(status.get('status', 'unknown'))}</p>
+        <p>{status_badge(status.get('status', 'unknown'))} {state_badge(status.get('state', 'production'))}</p>
         <p><strong>Step:</strong> {html.escape(status.get('step', 'unknown'))}</p>
         <p><strong>Message:</strong> {html.escape(status.get('message', ''))}</p>
         <p><strong>Updated:</strong> {html.escape(status.get('updated_at', ''))}</p>

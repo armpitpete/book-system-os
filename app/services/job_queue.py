@@ -11,6 +11,14 @@ from app.utils.paths import jobs_dir
 
 SAFE_TITLE_RE = re.compile(r"[^a-zA-Z0-9._ -]+")
 
+JOB_STATES = {"test", "production", "archived"}
+DEFAULT_JOB_STATE = "production"
+
+
+def normalise_job_state(value: str | None) -> str:
+    raw = (value or DEFAULT_JOB_STATE).strip().lower()
+    return raw if raw in JOB_STATES else DEFAULT_JOB_STATE
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -26,7 +34,7 @@ def status_path(job_dir: Path) -> Path:
     return job_dir / "status.json"
 
 
-def write_status(job_dir: Path, *, status: str, step: str, message: str = "") -> None:
+def write_status(job_dir: Path, *, status: str, step: str, message: str = "", state: str | None = None) -> None:
     old: dict[str, Any] = {}
     path = status_path(job_dir)
     if path.exists():
@@ -37,6 +45,7 @@ def write_status(job_dir: Path, *, status: str, step: str, message: str = "") ->
 
     data = {
         **old,
+        "state": normalise_job_state(state or old.get("state")),
         "status": status,
         "step": step,
         "message": message,
@@ -48,14 +57,35 @@ def write_status(job_dir: Path, *, status: str, step: str, message: str = "") ->
 def read_status(job_dir: Path) -> dict[str, Any]:
     path = status_path(job_dir)
     if not path.exists():
-        return {"status": "unknown", "step": "missing-status", "message": "No status file"}
+        return {
+            "state": DEFAULT_JOB_STATE,
+            "status": "unknown",
+            "step": "missing-status",
+            "message": "No status file",
+        }
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"status": "broken", "step": "bad-status-json", "message": "Status file is invalid JSON"}
+        return {
+            "state": DEFAULT_JOB_STATE,
+            "status": "broken",
+            "step": "bad-status-json",
+            "message": "Status file is invalid JSON",
+        }
+
+    if not isinstance(data, dict):
+        return {
+            "state": DEFAULT_JOB_STATE,
+            "status": "broken",
+            "step": "bad-status-json",
+            "message": "Status file is not a JSON object",
+        }
+
+    data["state"] = normalise_job_state(data.get("state"))
+    return data
 
 
-def create_job(*, title: str, markdown: str) -> tuple[str, Path]:
+def create_job(*, title: str, markdown: str, state: str = DEFAULT_JOB_STATE) -> tuple[str, Path]:
     job_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     job_dir = jobs_dir() / job_id
     (job_dir / "input").mkdir(parents=True, exist_ok=False)
@@ -71,7 +101,7 @@ def create_job(*, title: str, markdown: str) -> tuple[str, Path]:
     }
     (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     (job_dir / "input" / "book.md").write_text(markdown, encoding="utf-8")
-    write_status(job_dir, status="queued", step="waiting", message="Job queued")
+    write_status(job_dir, status="queued", step="waiting", message="Job queued", state=state)
     return job_id, job_dir
 
 

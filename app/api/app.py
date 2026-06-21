@@ -23,8 +23,8 @@ def health() -> dict[str, str]:
 
 @app.post("/api/submit", dependencies=[Depends(api_key_required)])
 def api_submit(payload: BookSubmitRequest) -> dict[str, str]:
-    job_id, _ = create_job(title=payload.title, markdown=payload.content)
-    return {"job_id": job_id, "status": "queued"}
+    job_id, _ = create_job(title=payload.title, markdown=payload.content, state="production")
+    return {"job_id": job_id, "status": "queued", "state": "production"}
 
 
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(api_key_required)])

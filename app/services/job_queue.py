@@ -35,7 +35,57 @@ def status_path(job_dir: Path) -> Path:
     return job_dir / "status.json"
 
 
-def write_status(job_dir: Path, *, status: str, step: str, message: str = "", state: str | None = None) -> None:
+def events_path(job_dir: Path) -> Path:
+    return job_dir / "events.jsonl"
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 0 else default
+
+
+def append_job_event(job_dir: Path, event: str, message: str = "", **fields: Any) -> None:
+    payload = {
+        "created_at": utc_now(),
+        "event": event,
+        "message": message,
+        **fields,
+    }
+    with events_path(job_dir).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def read_job_events(job_dir: Path, *, limit: int = 20) -> list[dict[str, Any]]:
+    path = events_path(job_dir)
+    if not path.exists():
+        return []
+
+    events: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+
+    return events[-limit:]
+
+
+def write_status(
+    job_dir: Path,
+    *,
+    status: str,
+    step: str,
+    message: str = "",
+    state: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
     old: dict[str, Any] = {}
     path = status_path(job_dir)
     if path.exists():
@@ -52,6 +102,8 @@ def write_status(job_dir: Path, *, status: str, step: str, message: str = "", st
         "message": message,
         "updated_at": utc_now(),
     }
+    if extra:
+        data.update(extra)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
@@ -83,6 +135,9 @@ def retry_job(job_dir: Path) -> None:
     if not metadata_file.is_file():
         raise FileNotFoundError("Cannot retry job because metadata.json is missing")
 
+    retry_count = safe_int(status.get("retry_count")) + 1
+    retry_at = utc_now()
+
     for name in ("work", "output", "logs"):
         path = job_dir / name
         if path.exists():
@@ -93,7 +148,19 @@ def retry_job(job_dir: Path) -> None:
     if lock.exists():
         lock.unlink()
 
-    write_status(job_dir, status="queued", step="retry", message="Job queued for retry")
+    write_status(
+        job_dir,
+        status="queued",
+        step="retry",
+        message="Job queued for retry",
+        extra={"retry_count": retry_count, "last_retry_at": retry_at},
+    )
+    append_job_event(
+        job_dir,
+        "retry",
+        "Job queued for retry",
+        retry_count=retry_count,
+    )
 
 
 def read_status(job_dir: Path) -> dict[str, Any]:
@@ -144,6 +211,13 @@ def create_job(*, title: str, markdown: str, state: str = DEFAULT_JOB_STATE) -> 
     (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     (job_dir / "input" / "book.md").write_text(markdown, encoding="utf-8")
     write_status(job_dir, status="queued", step="waiting", message="Job queued", state=state)
+    append_job_event(
+        job_dir,
+        "created",
+        "Job queued",
+        state=normalise_job_state(state),
+        status="queued",
+    )
     return job_id, job_dir
 
 

@@ -11,11 +11,11 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.api.auth import dashboard_auth
-from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_job_events, read_status, retry_job, set_job_state
+from app.services.job_queue import JOB_STATES, cleanup_old_test_jobs, create_job, get_job, list_jobs, read_job_events, read_status, retry_job, set_job_state
 
 router = APIRouter(dependencies=[Depends(dashboard_auth)])
 
-APP_VERSION = "0.1.6"
+APP_VERSION = "0.1.7"
 
 
 @lru_cache(maxsize=1)
@@ -55,6 +55,7 @@ def page(title: str, body: str) -> HTMLResponse:
     textarea, input, select {{ width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #4a535c; border-radius: 10px; font: inherit; background: #1f252b; color: #f4f1e8; }}
     textarea {{ min-height: 320px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }}
     button, .button {{ display: inline-block; background: #3b424a; color: #f4f1e8; border: 1px solid #59636d; border-radius: 10px; padding: 10px 14px; text-decoration: none; font-weight: 650; cursor: pointer; }}
+    .danger {{ background: #7f1d1d; color: #fee2e2; border-color: #b91c1c; }}
     .secondary {{ background: #2b3137; color: #f4f1e8; border: 1px solid #59636d; }}
     .muted {{ color: #c6cbd2; }}
     .status {{ display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.9rem; background: #3b424a; color: #f4f1e8; }}
@@ -219,6 +220,59 @@ def selected_attr(current: bool, option: bool) -> str:
     return " selected" if current is option else ""
 
 
+def cleanup_job_rows(jobs: list[dict]) -> str:
+    if not jobs:
+        return '<p class="muted">No eligible old test jobs found.</p>'
+
+    items = []
+    for job in jobs:
+        job_id = html.escape(str(job.get("job_id", "unknown")))
+        status = html.escape(str(job.get("status", "unknown")))
+        created_at = html.escape(str(job.get("created_at", "unknown")))
+        age_days = html.escape(str(job.get("age_days", "unknown")))
+        items.append(
+            f"<li><strong>{job_id}</strong>"
+            f"<br><span class=\"muted\">status: {status}; created: {created_at}; age: {age_days} days</span></li>"
+        )
+
+    return f"<ul>{''.join(items)}</ul>"
+
+
+def cleanup_result_page(result: dict) -> HTMLResponse:
+    dry_run = bool(result.get("dry_run"))
+    days = html.escape(str(result.get("older_than_days", 7)))
+    eligible_count = int(result.get("eligible_count", 0))
+    archived_count = int(result.get("archived_count", 0))
+    rows = cleanup_job_rows(result.get("jobs", []))
+
+    if dry_run and eligible_count:
+        action = f"""
+          <form method="post" action="/jobs/cleanup-test-jobs">
+            <input type="hidden" name="older_than_days" value="{days}">
+            <button class="danger" type="submit" name="confirm" value="archive">Archive eligible test jobs</button>
+            <a class="button secondary" href="/">Cancel</a>
+          </form>
+        """
+        summary = f"{eligible_count} old test job(s) are eligible for archive."
+    elif dry_run:
+        action = '<p><a class="button" href="/">Back to dashboard</a></p>'
+        summary = "No old test jobs are eligible for archive."
+    else:
+        action = '<p><a class="button" href="/">Back to dashboard</a></p>'
+        summary = f"Archived {archived_count} old test job(s)."
+
+    return page("Cleanup old test jobs", f"""
+      <p><a href="/">&larr; Back to dashboard</a></p>
+      <div class="card">
+        <h1>Cleanup old test jobs</h1>
+        <p class="muted">Threshold: older than {days} day(s).</p>
+        <p>{html.escape(summary)}</p>
+        {rows}
+        {action}
+      </div>
+    """)
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     show_test: str = Query("1"),
@@ -302,6 +356,16 @@ def dashboard(
         </form>
       </div>
 
+
+      <div class="card">
+        <h2>Cleanup old test jobs</h2>
+        <p class="muted">Preview old test jobs before archiving them. Running and queued jobs are never touched.</p>
+        <form method="post" action="/jobs/cleanup-test-jobs">
+          <p><label>Archive test jobs older than this many days<br><input name="older_than_days" type="number" min="1" max="365" value="7"></label></p>
+          <button type="submit">Preview cleanup</button>
+        </form>
+      </div>
+
       <h2>Jobs</h2>
       <p class="muted">Showing up to 30 jobs matching the current filters.</p>
       {job_list}
@@ -312,6 +376,14 @@ def dashboard(
 def submit_form(title: str = Form("Untitled"), content: str = Form(...)) -> RedirectResponse:
     create_job(title=title, markdown=content)
     return RedirectResponse(url="/", status_code=303)
+
+
+@router.post("/jobs/cleanup-test-jobs", response_class=HTMLResponse)
+def cleanup_test_jobs(older_than_days: int = Form(7), confirm: str = Form("")) -> HTMLResponse:
+    days = max(1, min(365, int(older_than_days)))
+    dry_run = confirm.strip().lower() != "archive"
+    result = cleanup_old_test_jobs(older_than_days=days, dry_run=dry_run)
+    return cleanup_result_page(result)
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)

@@ -4,7 +4,7 @@ import json
 import re
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,7 @@ SAFE_TITLE_RE = re.compile(r"[^a-zA-Z0-9._ -]+")
 
 JOB_STATES = {"test", "production", "archived"}
 DEFAULT_JOB_STATE = "production"
+ARCHIVABLE_JOB_STATUSES = {"done", "failed", "cancelled"}
 
 
 def normalise_job_state(value: str | None) -> str:
@@ -121,6 +122,98 @@ def set_job_state(job_dir: Path, state: str) -> None:
     data["state"] = normalise_job_state(state)
     data["updated_at"] = utc_now()
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def parse_utc_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc)
+
+
+def job_created_at(job_dir: Path, status: dict[str, Any]) -> datetime | None:
+    metadata_file = job_dir / "metadata.json"
+    if metadata_file.exists():
+        try:
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            metadata = {}
+        if isinstance(metadata, dict):
+            created_at = parse_utc_timestamp(metadata.get("created_at"))
+            if created_at is not None:
+                return created_at
+
+    return parse_utc_timestamp(status.get("updated_at"))
+
+
+def cleanup_old_test_jobs(*, older_than_days: int = 7, dry_run: bool = True) -> dict[str, Any]:
+    days = max(1, int(older_than_days))
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    candidates: list[dict[str, Any]] = []
+    archived_count = 0
+
+    for job in list_jobs():
+        status = read_status(job)
+        job_state = status.get("state")
+        job_status = status.get("status")
+
+        if job_state != "test":
+            continue
+        if job_status in {"queued", "running"}:
+            continue
+        if job_status not in ARCHIVABLE_JOB_STATUSES:
+            continue
+
+        created_at = job_created_at(job, status)
+        if created_at is None or created_at > cutoff:
+            continue
+
+        candidate = {
+            "job_id": job.name,
+            "status": job_status,
+            "created_at": created_at.isoformat(timespec="seconds"),
+            "age_days": max(0, (now - created_at).days),
+        }
+        candidates.append(candidate)
+
+        if dry_run:
+            continue
+
+        archived_at = utc_now()
+        status["state"] = "archived"
+        status["archived_at"] = archived_at
+        status["archive_reason"] = f"Archived by cleanup helper; older than {days} days"
+        status["updated_at"] = archived_at
+        status_path(job).write_text(json.dumps(status, indent=2), encoding="utf-8")
+        append_job_event(
+            job,
+            "archived",
+            f"Archived by cleanup helper; older than {days} days",
+            older_than_days=days,
+        )
+        archived_count += 1
+
+    return {
+        "dry_run": dry_run,
+        "older_than_days": days,
+        "eligible_count": len(candidates),
+        "archived_count": archived_count,
+        "jobs": candidates,
+    }
 
 
 def retry_job(job_dir: Path) -> None:

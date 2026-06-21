@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import html
 import json
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
@@ -12,6 +14,30 @@ from app.api.auth import dashboard_auth
 from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_job_events, read_status, retry_job, set_job_state
 
 router = APIRouter(dependencies=[Depends(dashboard_auth)])
+
+APP_VERSION = "0.1.6"
+
+
+@lru_cache(maxsize=1)
+def git_commit_label() -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return "unknown"
+
+    commit = result.stdout.strip()
+    return commit or "unknown"
+
+
+def version_label() -> str:
+    return f"Book System OS v{APP_VERSION} - commit {git_commit_label()}"
 
 
 def page(title: str, body: str) -> HTMLResponse:
@@ -42,9 +68,10 @@ def page(title: str, body: str) -> HTMLResponse:
     ::placeholder {{ color: #aeb5bc; }}
     option {{ background: #1f252b; color: #f4f1e8; }}
     a {{ color: #f4f1e8; }}
+    .version-label {{ margin-top: 28px; padding-top: 14px; border-top: 1px solid #3b424a; color: #aeb5bc; font-size: 0.9rem; }}
   </style>
 </head>
-<body><main>{body}</main></body>
+<body><main>{body}<footer class="version-label">{html.escape(version_label())}</footer></main></body>
 </html>""")
 
 

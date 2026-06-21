@@ -77,6 +77,21 @@ def job_state_controls(job_id: str, current_state: str) -> str:
     """
 
 
+def compact_message(message: str, *, limit: int = 120) -> str:
+    clean = " ".join((message or "").split())
+    if len(clean) <= limit:
+        return clean
+    return f"{clean[: limit - 1].rstrip()}…"
+
+
+def dashboard_status_summary(status: dict) -> str:
+    step = html.escape(status.get("step", "unknown"))
+    message = compact_message(status.get("message", ""))
+    if not message:
+        return f"Step: {step}"
+    return f"Step: {step} &mdash; {html.escape(message)}"
+
+
 def truthy_query(value: str | None, *, default: bool) -> bool:
     if value is None:
         return default
@@ -122,7 +137,7 @@ def dashboard(
         <div class="card">
           <h3>{html.escape(meta_title)}</h3>
           <p>{status_badge(job_status)} {state_badge(job_state)} <span class="muted">{job_id}</span></p>
-          <p class="muted">Step: {html.escape(status.get('step', 'unknown'))} &mdash; {html.escape(status.get('message', ''))}</p>
+          <p class="muted">{dashboard_status_summary(status)}</p>
           <p><a class="button" href="/jobs/{job_id}">Open job</a></p>
         </div>
         """)

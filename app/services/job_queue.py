@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,31 @@ def set_job_state(job_dir: Path, state: str) -> None:
     data["state"] = normalise_job_state(state)
     data["updated_at"] = utc_now()
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def retry_job(job_dir: Path) -> None:
+    status = read_status(job_dir)
+    if status.get("status") != "failed":
+        raise ValueError("Only failed jobs can be retried")
+
+    input_file = job_dir / "input" / "book.md"
+    metadata_file = job_dir / "metadata.json"
+    if not input_file.is_file():
+        raise FileNotFoundError("Cannot retry job because input/book.md is missing")
+    if not metadata_file.is_file():
+        raise FileNotFoundError("Cannot retry job because metadata.json is missing")
+
+    for name in ("work", "output", "logs"):
+        path = job_dir / name
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+    lock = job_dir / ".lock"
+    if lock.exists():
+        lock.unlink()
+
+    write_status(job_dir, status="queued", step="retry", message="Job queued for retry")
 
 
 def read_status(job_dir: Path) -> dict[str, Any]:

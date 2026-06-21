@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.api.auth import dashboard_auth
-from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_status, set_job_state
+from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_status, retry_job, set_job_state
 
 router = APIRouter(dependencies=[Depends(dashboard_auth)])
 
@@ -79,6 +79,22 @@ def job_state_controls(job_id: str, current_state: str) -> str:
         <h2>Lifecycle</h2>
         <p class="muted">Current lifecycle state: {state_badge(current_state)}</p>
         {''.join(controls)}
+      </div>
+    """
+
+
+def retry_controls(job_id: str, status: str) -> str:
+    if status != "failed":
+        return ""
+
+    safe_job_id = quote(job_id, safe="")
+    return f"""
+      <div class="card">
+        <h2>Retry</h2>
+        <p class="muted">Retry this failed job using the same input Markdown.</p>
+        <form method="post" action="/jobs/{safe_job_id}/retry">
+          <button type="submit">Retry failed job</button>
+        </form>
       </div>
     """
 
@@ -269,9 +285,26 @@ def job_detail(job_id: str) -> HTMLResponse:
         <p><strong>Updated:</strong> {html.escape(status.get('updated_at', ''))}</p>
       </div>
       {job_state_controls(job_id, status.get('state', 'production'))}
+      {retry_controls(job_id, status.get('status', 'unknown'))}
       <div class="card"><h2>Outputs</h2><ul>{''.join(output_items)}</ul></div>
       <div class="card"><h2>Logs</h2>{''.join(log_items)}</div>
     """)
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_failed_job(job_id: str) -> RedirectResponse:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    try:
+        retry_job(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return RedirectResponse(url=f"/jobs/{quote(job_id, safe='')}", status_code=303)
 
 
 @router.post("/jobs/{job_id}/state")

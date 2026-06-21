@@ -36,6 +36,9 @@ def page(title: str, body: str) -> HTMLResponse:
     .state {{ display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 0.9rem; background: #3b424a; color: #f4f1e8; }}
     .state.production {{ background: #374151; color: #e9edf5; }} .state.test {{ background: #6b4f12; color: #fff7d6; }} .state.archived {{ background: #4b5563; color: #e5e7eb; }}
     code {{ background: #3b424a; color: #f4f1e8; padding: 2px 5px; border-radius: 5px; }}
+    pre.log-snippet {{ max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #171c21; color: #f4f1e8; border: 1px solid #3b424a; border-radius: 10px; padding: 12px; font-size: 0.92rem; }}
+    details.log-viewer {{ margin: 12px 0; }}
+    details.log-viewer summary {{ cursor: pointer; font-weight: 650; }}
     ::placeholder {{ color: #aeb5bc; }}
     option {{ background: #1f252b; color: #f4f1e8; }}
     a {{ color: #f4f1e8; }}
@@ -93,6 +96,34 @@ def dashboard_status_summary(status: dict) -> str:
     if not message:
         return f"Step: {step}"
     return f"Step: {step} &mdash; {html.escape(message)}"
+
+
+def read_log_snippet(path: Path, *, limit: int = 12000) -> tuple[str, bool]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return f"Could not read log: {exc}", False
+
+    if len(text) <= limit:
+        return text, False
+
+    return text[-limit:], True
+
+
+def log_viewer_item(path: Path) -> str:
+    snippet, truncated = read_log_snippet(path)
+    safe_name = html.escape(path.name)
+    safe_snippet = html.escape(snippet)
+    size = path.stat().st_size
+    truncated_note = '<p class="muted">Showing last 12,000 characters.</p>' if truncated else ""
+
+    return f"""
+      <details class="log-viewer">
+        <summary>{safe_name} <span class="muted">({size} bytes)</span></summary>
+        {truncated_note}
+        <pre class="log-snippet">{safe_snippet}</pre>
+      </details>
+    """
 
 
 def truthy_query(value: str | None, *, default: bool) -> bool:
@@ -224,9 +255,9 @@ def job_detail(job_id: str) -> HTMLResponse:
     log_items = []
     for item in sorted((job / "logs").glob("*")):
         if item.is_file():
-            log_items.append(f"<li>{html.escape(item.name)}</li>")
+            log_items.append(log_viewer_item(item))
     if not log_items:
-        log_items.append('<li class="muted">No logs yet.</li>')
+        log_items.append('<p class="muted">No logs yet.</p>')
 
     return page("Job", f"""
       <p><a href="/">&larr; Back to dashboard</a></p>
@@ -239,7 +270,7 @@ def job_detail(job_id: str) -> HTMLResponse:
       </div>
       {job_state_controls(job_id, status.get('state', 'production'))}
       <div class="card"><h2>Outputs</h2><ul>{''.join(output_items)}</ul></div>
-      <div class="card"><h2>Logs</h2><ul>{''.join(log_items)}</ul></div>
+      <div class="card"><h2>Logs</h2>{''.join(log_items)}</div>
     """)
 
 

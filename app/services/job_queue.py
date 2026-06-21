@@ -54,6 +54,22 @@ def write_status(job_dir: Path, *, status: str, step: str, message: str = "", st
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def set_job_state(job_dir: Path, state: str) -> None:
+    path = status_path(job_dir)
+    data: dict[str, Any] = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                data = raw
+        except json.JSONDecodeError:
+            data = {}
+
+    data["state"] = normalise_job_state(state)
+    data["updated_at"] = utc_now()
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def read_status(job_dir: Path) -> dict[str, Any]:
     path = status_path(job_dir)
     if not path.exists():

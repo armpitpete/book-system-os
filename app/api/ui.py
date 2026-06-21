@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.api.auth import dashboard_auth
-from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_status, retry_job, set_job_state
+from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_job_events, read_status, retry_job, set_job_state
 
 router = APIRouter(dependencies=[Depends(dashboard_auth)])
 
@@ -140,6 +140,46 @@ def log_viewer_item(path: Path) -> str:
         <pre class="log-snippet">{safe_snippet}</pre>
       </details>
     """
+
+
+def retry_count_value(status: dict) -> int:
+    try:
+        count = int(status.get("retry_count", 0))
+    except (TypeError, ValueError):
+        return 0
+    return count if count >= 0 else 0
+
+
+def retry_metadata(status: dict) -> str:
+    retry_count = retry_count_value(status)
+    last_retry = status.get("last_retry_at") or "Never"
+    return f"""
+        <p><strong>Retry count:</strong> {retry_count}</p>
+        <p><strong>Last retry:</strong> {html.escape(str(last_retry))}</p>
+    """
+
+
+def job_history_items(events: list[dict]) -> str:
+    if not events:
+        return '<p class="muted">No history yet.</p>'
+
+    items = []
+    for event in reversed(events):
+        event_name = html.escape(str(event.get("event", "event")))
+        created_at = html.escape(str(event.get("created_at", "")))
+        message = html.escape(str(event.get("message", "")))
+        retry_count = event.get("retry_count")
+        retry_note = ""
+        if retry_count is not None:
+            retry_note = f' <span class="muted">(retry #{html.escape(str(retry_count))})</span>'
+
+        message_line = f"<br>{message}" if message else ""
+        items.append(
+            f"<li><strong>{event_name}</strong>{retry_note}"
+            f"<br><span class=\"muted\">{created_at}</span>{message_line}</li>"
+        )
+
+    return f"<ul>{''.join(items)}</ul>"
 
 
 def truthy_query(value: str | None, *, default: bool) -> bool:
@@ -275,6 +315,8 @@ def job_detail(job_id: str) -> HTMLResponse:
     if not log_items:
         log_items.append('<p class="muted">No logs yet.</p>')
 
+    history_items = job_history_items(read_job_events(job))
+
     return page("Job", f"""
       <p><a href="/">&larr; Back to dashboard</a></p>
       <div class="card">
@@ -283,9 +325,11 @@ def job_detail(job_id: str) -> HTMLResponse:
         <p><strong>Step:</strong> {html.escape(status.get('step', 'unknown'))}</p>
         <p><strong>Message:</strong> {html.escape(status.get('message', ''))}</p>
         <p><strong>Updated:</strong> {html.escape(status.get('updated_at', ''))}</p>
+        {retry_metadata(status)}
       </div>
       {job_state_controls(job_id, status.get('state', 'production'))}
       {retry_controls(job_id, status.get('status', 'unknown'))}
+      <div class="card"><h2>History</h2>{history_items}</div>
       <div class="card"><h2>Outputs</h2><ul>{''.join(output_items)}</ul></div>
       <div class="card"><h2>Logs</h2>{''.join(log_items)}</div>
     """)

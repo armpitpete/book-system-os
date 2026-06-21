@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.api.auth import dashboard_auth
-from app.services.job_queue import create_job, get_job, list_jobs, read_status
+from app.services.job_queue import JOB_STATES, create_job, get_job, list_jobs, read_status, set_job_state
 
 router = APIRouter(dependencies=[Depends(dashboard_auth)])
 
@@ -52,6 +52,29 @@ def state_badge(state: str) -> str:
     safe = html.escape(state or "production")
     cls = safe if safe in {"test", "production", "archived"} else ""
     return f'<span class="state {cls}">{safe}</span>'
+
+
+def job_state_controls(job_id: str, current_state: str) -> str:
+    safe_job_id = quote(job_id, safe="")
+    controls = []
+    for target_state, label, button_class in (
+        ("test", "Mark as test", "secondary"),
+        ("production", "Mark as production", "secondary"),
+        ("archived", "Archive", ""),
+    ):
+        controls.append(f"""
+          <form method="post" action="/jobs/{safe_job_id}/state" style="display: inline-block; margin: 0 8px 8px 0;">
+            <button class="{button_class}" type="submit" name="state" value="{target_state}">{label}</button>
+          </form>
+        """)
+
+    return f"""
+      <div class="card">
+        <h2>Lifecycle</h2>
+        <p class="muted">Current lifecycle state: {state_badge(current_state)}</p>
+        {''.join(controls)}
+      </div>
+    """
 
 
 def truthy_query(value: str | None, *, default: bool) -> bool:
@@ -196,9 +219,24 @@ def job_detail(job_id: str) -> HTMLResponse:
         <p><strong>Message:</strong> {html.escape(status.get('message', ''))}</p>
         <p><strong>Updated:</strong> {html.escape(status.get('updated_at', ''))}</p>
       </div>
+      {job_state_controls(job_id, status.get('state', 'production'))}
       <div class="card"><h2>Outputs</h2><ul>{''.join(output_items)}</ul></div>
       <div class="card"><h2>Logs</h2><ul>{''.join(log_items)}</ul></div>
     """)
+
+
+@router.post("/jobs/{job_id}/state")
+def update_job_state(job_id: str, state: str = Form(...)) -> RedirectResponse:
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    requested_state = state.strip().lower()
+    if requested_state not in JOB_STATES:
+        raise HTTPException(status_code=400, detail="Invalid job state")
+
+    set_job_state(job, requested_state)
+    return RedirectResponse(url=f"/jobs/{quote(job_id, safe='')}", status_code=303)
 
 
 @router.get("/jobs/{job_id}/output/{filename}")

@@ -32,14 +32,10 @@ def dashboard(
         show_failed=show_failed,
         show_archived=show_archived,
     )
-    body = response.body.decode(response.charset or "utf-8")
+    body = response.body.decode("utf-8")
     if 'name="state"' not in body:
         body = body.replace(MARKDOWN_FIELD, JOB_TYPE_FIELD + MARKDOWN_FIELD, 1)
-    return HTMLResponse(
-        content=body,
-        status_code=response.status_code,
-        headers=dict(response.headers),
-    )
+    return HTMLResponse(content=body, status_code=response.status_code)
 
 
 @router.post("/submit-form")

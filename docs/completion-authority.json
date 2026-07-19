@@ -6,7 +6,7 @@
   "gate_count": 10,
   "gate_weight_percent": 10,
   "baseline": {
-    "ref": "main-before-stabilisation",
+    "ref": "597efe713890380c36824d557cf1bcb56df6c90a",
     "complete_gates": 7,
     "total_gates": 10,
     "percent": 70

@@ -8,11 +8,30 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 security = HTTPBasic(auto_error=False)
 
+LOCAL_RUNTIME_MODES = {"local", "development", "test"}
+
+
+def runtime_mode() -> str:
+    return os.getenv("BOOK_SYSTEM_ENV", "production").strip().lower() or "production"
+
+
+def local_auth_bypass_enabled() -> bool:
+    return runtime_mode() in LOCAL_RUNTIME_MODES
+
+
+def configuration_error(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=detail,
+    )
+
 
 def api_key_required(request: Request) -> None:
     expected = os.getenv("BOOK_API_KEY", "").strip()
     if not expected:
-        return
+        if local_auth_bypass_enabled():
+            return
+        raise configuration_error("API authentication is not configured")
 
     supplied = request.headers.get("x-api-key") or request.headers.get("x_api_key")
     if not supplied or not secrets.compare_digest(supplied, expected):
@@ -23,9 +42,13 @@ def dashboard_auth(credentials: HTTPBasicCredentials | None = Depends(security))
     username = os.getenv("BOOK_ADMIN_USERNAME", "").strip()
     password = os.getenv("BOOK_ADMIN_PASSWORD", "").strip()
 
-    # Empty username/password deliberately means local/open mode.
     if not username and not password:
-        return
+        if local_auth_bypass_enabled():
+            return
+        raise configuration_error("Dashboard authentication is not configured")
+
+    if not username or not password:
+        raise configuration_error("Dashboard authentication is incomplete")
 
     if credentials is None:
         raise HTTPException(

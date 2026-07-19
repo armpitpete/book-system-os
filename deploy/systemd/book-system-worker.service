@@ -1,0 +1,23 @@
+[Unit]
+Description=Book System OS worker
+After=network-online.target book-system-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/book-system
+EnvironmentFile=/opt/book-system/config/env
+ExecStart=/opt/book-system/.venv/bin/python -m app.services.worker
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/book-system/books /opt/book-system/logs
+
+[Install]
+WantedBy=multi-user.target

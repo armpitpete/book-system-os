@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "authority": "docs/COMPLETION_CONTRACT.md",
+  "scope": "book-system-os-v0.1-stable-deterministic-core",
+  "denominator_locked": true,
+  "gate_count": 10,
+  "gate_weight_percent": 10,
+  "baseline": {
+    "ref": "597efe713890380c36824d557cf1bcb56df6c90a",
+    "complete_gates": 7,
+    "total_gates": 10,
+    "percent": 70
+  },
+  "target": {
+    "complete_gates": 10,
+    "total_gates": 10,
+    "percent": 100,
+    "condition": "stabilisation PR merged with exact-head CI passing"
+  },
+  "full_book_system_os": {
+    "percentage_authorised": false,
+    "status": "incomplete-not-baselined"
+  }
+}

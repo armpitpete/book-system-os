@@ -3,12 +3,25 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api import ui
 from app.api.auth import api_key_required
-from app.api.ui import router as ui_router
+from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
+from app.version import APP_VERSION
 
-app = FastAPI(title="Book System OS", version="0.1.0")
-app.include_router(ui_router)
+ui.APP_VERSION = APP_VERSION
+ui.router.routes[:] = [
+    route
+    for route in ui.router.routes
+    if not (
+        route.path == "/"
+        or (route.path == "/submit-form" and "POST" in (route.methods or set()))
+    )
+]
+
+app = FastAPI(title="Book System OS", version=APP_VERSION)
+app.include_router(submission_router)
+app.include_router(ui.router)
 
 
 class BookSubmitRequest(BaseModel):
@@ -27,7 +40,7 @@ def api_v1_status() -> dict:
         "ok": True,
         "gateway": "publish.toiletrage.co.uk",
         "service": "book-system-os",
-        "version": app.version,
+        "version": APP_VERSION,
         "routes_enabled": ["book-system"],
         "write_enabled": True,
         "implemented": [

@@ -8,11 +8,36 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 security = HTTPBasic(auto_error=False)
 
+LOCAL_RUNTIME_MODES = {"local", "development", "test"}
+PLACEHOLDER_PREFIXES = ("replace-with-", "change-this", "changeme")
+
+
+def runtime_mode() -> str:
+    return os.getenv("BOOK_SYSTEM_ENV", "production").strip().lower() or "production"
+
+
+def local_auth_bypass_enabled() -> bool:
+    return runtime_mode() in LOCAL_RUNTIME_MODES
+
+
+def configured_value(value: str) -> bool:
+    normalised = value.strip().lower()
+    return bool(normalised) and not normalised.startswith(PLACEHOLDER_PREFIXES)
+
+
+def configuration_error(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=detail,
+    )
+
 
 def api_key_required(request: Request) -> None:
     expected = os.getenv("BOOK_API_KEY", "").strip()
-    if not expected:
-        return
+    if not configured_value(expected):
+        if local_auth_bypass_enabled():
+            return
+        raise configuration_error("API authentication is not configured")
 
     supplied = request.headers.get("x-api-key") or request.headers.get("x_api_key")
     if not supplied or not secrets.compare_digest(supplied, expected):
@@ -23,9 +48,16 @@ def dashboard_auth(credentials: HTTPBasicCredentials | None = Depends(security))
     username = os.getenv("BOOK_ADMIN_USERNAME", "").strip()
     password = os.getenv("BOOK_ADMIN_PASSWORD", "").strip()
 
-    # Empty username/password deliberately means local/open mode.
-    if not username and not password:
-        return
+    username_configured = configured_value(username)
+    password_configured = configured_value(password)
+
+    if not username_configured and not password_configured:
+        if local_auth_bypass_enabled():
+            return
+        raise configuration_error("Dashboard authentication is not configured")
+
+    if not username_configured or not password_configured:
+        raise configuration_error("Dashboard authentication is incomplete")
 
     if credentials is None:
         raise HTTPException(

@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field
 from app.api.auth import api_key_required
 from app.api.ui import router as ui_router
 from app.services.job_queue import create_job, get_job, read_status
+from app.version import APP_VERSION
 
-app = FastAPI(title="Book System OS", version="0.1.0")
+app = FastAPI(title="Book System OS", version=APP_VERSION)
 app.include_router(ui_router)
 
 
@@ -27,7 +28,7 @@ def api_v1_status() -> dict:
         "ok": True,
         "gateway": "publish.toiletrage.co.uk",
         "service": "book-system-os",
-        "version": app.version,
+        "version": APP_VERSION,
         "routes_enabled": ["book-system"],
         "write_enabled": True,
         "implemented": [

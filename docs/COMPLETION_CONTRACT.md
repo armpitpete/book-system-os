@@ -8,9 +8,15 @@ The denominator is fixed at ten principal gates. Each gate is worth 10 percentag
 
 Later features cannot be added to this denominator without a reviewed contract revision.
 
+The authoritative pre-stabilisation baseline is exact `main` commit:
+
+```text
+597efe713890380c36824d557cf1bcb56df6c90a
+```
+
 ## Principal gates
 
-| Gate | Requirement | Evidence required | Main baseline before stabilisation |
+| Gate | Requirement | Promotion evidence | Baseline score |
 |---|---|---|---:|
 | C-01 | Dashboard and API accept Markdown submissions and create persistent jobs | automated submission tests and repository code | 10 |
 | C-02 | Background worker safely claims and processes queued jobs | worker code and locking regression test | 10 |
@@ -25,7 +31,7 @@ Later features cannot be added to this denominator without a reviewed contract r
 
 ## Authoritative baseline
 
-Before the stabilisation PR, the fixed v0.1 core is:
+At commit `597efe713890380c36824d557cf1bcb56df6c90a`, the fixed v0.1 core is:
 
 ```text
 7 of 10 gates complete — 70%

@@ -3,13 +3,17 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api import ui
 from app.api.auth import api_key_required
-from app.api.ui import router as ui_router
+from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
 from app.version import APP_VERSION
 
+ui.APP_VERSION = APP_VERSION
+
 app = FastAPI(title="Book System OS", version=APP_VERSION)
-app.include_router(ui_router)
+app.include_router(submission_router)
+app.include_router(ui.router)
 
 
 class BookSubmitRequest(BaseModel):

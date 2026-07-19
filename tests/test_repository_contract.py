@@ -10,7 +10,7 @@ def read(path: str) -> str:
     return (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
 
 
-def test_readme_uses_actual_environment_variable_names() -> None:
+def test_readme_uses_actual_authentication_variable_names() -> None:
     readme = read("README.md")
     env_example = read("config/env.example")
 
@@ -19,11 +19,12 @@ def test_readme_uses_actual_environment_variable_names() -> None:
         "BOOK_API_KEY",
         "BOOK_ADMIN_USERNAME",
         "BOOK_ADMIN_PASSWORD",
-        "BOOK_BIND_HOST",
-        "BOOK_BIND_PORT",
     ):
         assert name in readme
         assert name in env_example
+
+    for runtime_name in ("BOOK_BIND_HOST", "BOOK_BIND_PORT", "BOOK_WORKER_POLL_SECONDS"):
+        assert runtime_name in env_example
 
     for obsolete_name in (
         "BOOK_SYSTEM_ADMIN_TOKEN",

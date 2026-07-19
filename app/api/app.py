@@ -10,6 +10,14 @@ from app.services.job_queue import create_job, get_job, read_status
 from app.version import APP_VERSION
 
 ui.APP_VERSION = APP_VERSION
+ui.router.routes[:] = [
+    route
+    for route in ui.router.routes
+    if not (
+        route.path == "/"
+        or (route.path == "/submit-form" and "POST" in (route.methods or set()))
+    )
+]
 
 app = FastAPI(title="Book System OS", version=APP_VERSION)
 app.include_router(submission_router)

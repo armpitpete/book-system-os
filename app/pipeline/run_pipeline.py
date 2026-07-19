@@ -30,13 +30,14 @@ def run_pipeline(job_dir: Path) -> int:
         write_status(job_dir, status="running", step="pandoc-export", message="Building PDF/EPUB/DOCX outputs")
         outputs = pandoc_export(cleaned_file, output_dir, log_file)
 
+        write_status(job_dir, status="done", step="complete", message="Build complete")
+        final_status = read_status(job_dir)
         manifest = {
             "completed_at": utc_now(),
             "outputs": outputs,
-            "status": read_status(job_dir),
+            "status": final_status,
         }
         (job_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        write_status(job_dir, status="done", step="complete", message="Build complete")
         return 0
     except Exception as exc:
         (job_dir / "logs" / "error.log").write_text(traceback.format_exc(), encoding="utf-8")

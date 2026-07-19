@@ -9,6 +9,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 security = HTTPBasic(auto_error=False)
 
 LOCAL_RUNTIME_MODES = {"local", "development", "test"}
+PLACEHOLDER_PREFIXES = ("replace-with-", "change-this", "changeme")
 
 
 def runtime_mode() -> str:
@@ -17,6 +18,11 @@ def runtime_mode() -> str:
 
 def local_auth_bypass_enabled() -> bool:
     return runtime_mode() in LOCAL_RUNTIME_MODES
+
+
+def configured_value(value: str) -> bool:
+    normalised = value.strip().lower()
+    return bool(normalised) and not normalised.startswith(PLACEHOLDER_PREFIXES)
 
 
 def configuration_error(detail: str) -> HTTPException:
@@ -28,7 +34,7 @@ def configuration_error(detail: str) -> HTTPException:
 
 def api_key_required(request: Request) -> None:
     expected = os.getenv("BOOK_API_KEY", "").strip()
-    if not expected:
+    if not configured_value(expected):
         if local_auth_bypass_enabled():
             return
         raise configuration_error("API authentication is not configured")
@@ -42,12 +48,15 @@ def dashboard_auth(credentials: HTTPBasicCredentials | None = Depends(security))
     username = os.getenv("BOOK_ADMIN_USERNAME", "").strip()
     password = os.getenv("BOOK_ADMIN_PASSWORD", "").strip()
 
-    if not username and not password:
+    username_configured = configured_value(username)
+    password_configured = configured_value(password)
+
+    if not username_configured and not password_configured:
         if local_auth_bypass_enabled():
             return
         raise configuration_error("Dashboard authentication is not configured")
 
-    if not username or not password:
+    if not username_configured or not password_configured:
         raise configuration_error("Dashboard authentication is incomplete")
 
     if credentials is None:

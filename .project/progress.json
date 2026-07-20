@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "authority": "README.md",
+  "project_type": "software",
+  "note": "This contract reports only the bounded completion stages explicitly recorded in the cited repository authority. Overall completion, readiness and release status are not inferred.",
+  "stages": [
+    {
+      "id": "completion_authority",
+      "label": "Completion authority",
+      "completed": 7,
+      "total": 10,
+      "evidence": "README.md#L27"
+    }
+  ],
+  "overall": {
+    "enabled": false
+  }
+}

@@ -147,3 +147,17 @@ The real export integration test requires `pandoc` and `xelatex`. CI installs bo
 ## Operator manual
 
 See `docs/operator-admin-manual.md` for deployment, retry, cleanup and stop rules.
+
+<!-- AUTO:PROJECT-COMPLETION:START -->
+## Completion
+
+_Generated from validated project authority by `project-status-engine`. Repository activity is not completion._
+
+| Stage | Progress |
+|---|---:|
+| Completion authority | `7/10` — **70.0%** |
+
+Authority: `README.md`
+
+Overall completion is not enabled for this project.
+<!-- AUTO:PROJECT-COMPLETION:END -->

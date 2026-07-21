@@ -6,10 +6,10 @@
   "stages": [
     {
       "id": "completion_authority",
-      "label": "Completion authority",
-      "completed": 7,
+      "label": "v0.1 deterministic publishing core",
+      "completed": 10,
       "total": 10,
-      "evidence": "README.md#L27"
+      "evidence": "README.md#L29"
     }
   ],
   "overall": {

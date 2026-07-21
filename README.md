@@ -24,7 +24,7 @@ The fixed v0.1 scope and completion rules are defined in:
 - `docs/RELEASE_ACCEPTANCE.md`
 - `docs/completion-authority.json`
 
-Before the stabilisation repair, the fixed v0.1 core baseline is **7 of 10 gates — 70%**. It becomes **10 of 10 — 100%** only after the stabilisation pull request passes its exact-head CI and is merged.
+The fixed v0.1 deterministic publishing core is **10 of 10 gates — 100% complete**. PR #27 passed exact-head CI run #47 and merged as `a4589d7e99223cf8a875f372136f09b057de1ddf`. The pre-stabilisation baseline was 7 of 10 gates — 70%.
 
 Completion of the v0.1 core does not mean that the planned publish gateway, print-production system or Semantic Architect is complete.
 
@@ -155,7 +155,7 @@ _Generated from validated project authority by `project-status-engine`. Reposito
 
 | Stage | Progress |
 |---|---:|
-| Completion authority | `7/10` — **70.0%** |
+| v0.1 deterministic publishing core | `10/10` — **100.0%** |
 
 Authority: `README.md`
 

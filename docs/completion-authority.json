@@ -17,6 +17,16 @@
     "percent": 100,
     "condition": "stabilisation PR merged with exact-head CI passing"
   },
+  "current": {
+    "status": "complete",
+    "complete_gates": 10,
+    "total_gates": 10,
+    "percent": 100,
+    "stabilisation_pr": 27,
+    "accepted_head": "a3020a2febf581574ed68bd253d2b098a5320fe1",
+    "exact_head_ci_run": 47,
+    "merge_commit": "a4589d7e99223cf8a875f372136f09b057de1ddf"
+  },
   "full_book_system_os": {
     "percentage_authorised": false,
     "status": "incomplete-not-baselined"

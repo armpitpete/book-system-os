@@ -236,9 +236,8 @@ def test_backup_refuses_active_or_locked_jobs(tmp_path: Path) -> None:
 def test_backup_refuses_configured_secret_in_staged_data(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     make_job(root, "secret-job")
-    (root / "logs" / "service.log").write_text(
-        f"bad diagnostic leak: {API_SECRET}\n", encoding="utf-8"
-    )
+    crossing_payload = b"x" * (1024 * 1024 - 3) + API_SECRET.encode("utf-8") + b"\n"
+    (root / "logs" / "service.log").write_bytes(crossing_payload)
     archive = tmp_path / "secret.tar.gz"
 
     result = create_backup(root, archive)

@@ -214,16 +214,31 @@ for key, value in config_values.items():
         continue
     secret_values.append((key, value.encode("utf-8")))
 
+
+def configured_secret_in(path: Path) -> str | None:
+    if not secret_values:
+        return None
+    longest = max(len(secret) for _, secret in secret_values)
+    tail = b""
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            window = tail + chunk
+            for key, secret in secret_values:
+                if secret in window:
+                    return key
+            tail = window[-(longest - 1) :] if longest > 1 else b""
+    return None
+
+
 for path in staging.rglob("*"):
     if not path.is_file():
         continue
-    raw = path.read_bytes()
-    for key, secret in secret_values:
-        if secret in raw:
-            relative = path.relative_to(staging)
-            raise SystemExit(
-                f"backup=fail: configured secret value for {key} appears in staged file {relative}"
-            )
+    leaked_key = configured_secret_in(path)
+    if leaked_key is not None:
+        relative = path.relative_to(staging)
+        raise SystemExit(
+            f"backup=fail: configured secret value for {leaked_key} appears in staged file {relative}"
+        )
 
 job_count = sum(1 for path in (staging / "books" / "jobs").iterdir() if path.is_dir())
 file_count = sum(1 for path in staging.rglob("*") if path.is_file())

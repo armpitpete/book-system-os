@@ -7,9 +7,10 @@ from app.api import ui
 from app.api.auth import api_key_required
 from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
-from app.version import APP_VERSION
+from app.version import APP_VERSION, git_commit_label
 
 ui.APP_VERSION = APP_VERSION
+ui.git_commit_label = git_commit_label
 ui.router.routes[:] = [
     route
     for route in ui.router.routes

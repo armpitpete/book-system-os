@@ -3,20 +3,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
+import shutil
 import sys
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
 
 BACKUP_PREFIX = PurePosixPath("book-system-backup")
 BACKUP_FORMAT = "book-system-job-store"
 BACKUP_SCHEMA_VERSION = 1
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 REQUIRED_JOB_DIRECTORIES = ("input", "work", "output", "logs")
-REQUIRED_JOB_FILES = ("metadata.json", "status.json", "input/book.md", "events.jsonl")
 
 
 class BackupValidationError(RuntimeError):
@@ -54,7 +52,7 @@ def _safe_member_path(name: str) -> PurePosixPath:
 
 
 def _read_member_bytes(archive: tarfile.TarFile, member: tarfile.TarInfo) -> bytes:
-    handle: BinaryIO | None = archive.extractfile(member)
+    handle = archive.extractfile(member)
     if handle is None:
         raise BackupValidationError(f"Could not read archive member: {member.name}")
     return handle.read()
@@ -114,15 +112,21 @@ def _normalise_members(
     return members, file_count, byte_count
 
 
-def _require_file(
+def _require_file_member(
+    members: dict[PurePosixPath, tarfile.TarInfo], path: PurePosixPath
+) -> tarfile.TarInfo:
+    member = members.get(path)
+    if member is None or not member.isfile():
+        raise BackupValidationError(f"Required backup file is missing: {path}")
+    return member
+
+
+def _read_required_file(
     archive: tarfile.TarFile,
     members: dict[PurePosixPath, tarfile.TarInfo],
     path: PurePosixPath,
 ) -> bytes:
-    member = members.get(path)
-    if member is None or not member.isfile():
-        raise BackupValidationError(f"Required backup file is missing: {path}")
-    return _read_member_bytes(archive, member)
+    return _read_member_bytes(archive, _require_file_member(members, path))
 
 
 def _require_directory(
@@ -171,13 +175,14 @@ def _validate_job(
     for directory in REQUIRED_JOB_DIRECTORIES:
         _require_directory(members, job_root / directory)
 
-    records: dict[str, bytes] = {}
-    for relative in REQUIRED_JOB_FILES:
-        records[relative] = _require_file(archive, members, job_root / relative)
+    metadata_raw = _read_required_file(archive, members, job_root / "metadata.json")
+    status_raw = _read_required_file(archive, members, job_root / "status.json")
+    _require_file_member(members, job_root / "input" / "book.md")
+    events_raw = _read_required_file(archive, members, job_root / "events.jsonl")
 
-    metadata = _parse_json_object(records["metadata.json"], f"{job_id}/metadata.json")
-    status = _parse_json_object(records["status.json"], f"{job_id}/status.json")
-    _validate_events(records["events.jsonl"], f"{job_id}/events.jsonl")
+    metadata = _parse_json_object(metadata_raw, f"{job_id}/metadata.json")
+    status = _parse_json_object(status_raw, f"{job_id}/status.json")
+    _validate_events(events_raw, f"{job_id}/events.jsonl")
 
     if metadata.get("job_id") != job_id:
         raise BackupValidationError(
@@ -189,7 +194,7 @@ def _validate_job(
     manifest_path = job_root / "manifest.json"
     manifest_member = members.get(manifest_path)
     if status.get("status") == "done":
-        manifest_raw = _require_file(archive, members, manifest_path)
+        manifest_raw = _read_required_file(archive, members, manifest_path)
         manifest = _parse_json_object(manifest_raw, f"{job_id}/manifest.json")
         manifest_status = manifest.get("status")
         if not isinstance(manifest_status, dict) or manifest_status.get("status") != "done":
@@ -198,7 +203,13 @@ def _validate_job(
         if not isinstance(outputs, dict) or not outputs:
             raise BackupValidationError(f"Completed job manifest has no outputs: {job_id}")
         for output_name in outputs.values():
-            if not isinstance(output_name, str) or Path(output_name).name != output_name:
+            if (
+                not isinstance(output_name, str)
+                or not output_name
+                or "/" in output_name
+                or "\\" in output_name
+                or PurePosixPath(output_name).name != output_name
+            ):
                 raise BackupValidationError(f"Unsafe manifest output name in job {job_id}")
             output_path = job_root / "output" / output_name
             output_member = members.get(output_path)
@@ -210,7 +221,7 @@ def _validate_job(
         _parse_json_object(_read_member_bytes(archive, manifest_member), f"{job_id}/manifest.json")
 
 
-def validate_archive(archive_path: Path) -> tuple[ValidationSummary, dict[PurePosixPath, tarfile.TarInfo]]:
+def validate_archive(archive_path: Path) -> ValidationSummary:
     if not archive_path.is_file():
         raise BackupValidationError(f"Backup archive does not exist: {archive_path}")
 
@@ -227,7 +238,9 @@ def validate_archive(archive_path: Path) -> tuple[ValidationSummary, dict[PurePo
         _require_directory(members, BACKUP_PREFIX / "logs")
         _require_directory(members, BACKUP_PREFIX / "config")
 
-        metadata_raw = _require_file(archive, members, BACKUP_PREFIX / "backup-metadata.json")
+        metadata_raw = _read_required_file(
+            archive, members, BACKUP_PREFIX / "backup-metadata.json"
+        )
         metadata = _parse_json_object(metadata_raw, "backup-metadata.json")
         if metadata.get("format") != BACKUP_FORMAT:
             raise BackupValidationError("Unknown backup format")
@@ -236,7 +249,9 @@ def validate_archive(archive_path: Path) -> tuple[ValidationSummary, dict[PurePo
         if not isinstance(metadata.get("created_at"), str) or not metadata.get("created_at"):
             raise BackupValidationError("Backup metadata has no creation timestamp")
 
-        config_raw = _require_file(archive, members, BACKUP_PREFIX / "config" / "env.keys")
+        config_raw = _read_required_file(
+            archive, members, BACKUP_PREFIX / "config" / "env.keys"
+        )
         _validate_config_shape(config_raw)
 
         forbidden = (
@@ -255,14 +270,11 @@ def validate_archive(archive_path: Path) -> tuple[ValidationSummary, dict[PurePo
         for job_id in jobs:
             _validate_job(archive, members, job_id)
 
-    return (
-        ValidationSummary(
-            archive=str(archive_path.resolve()),
-            jobs=len(jobs),
-            files=file_count,
-            bytes=byte_count,
-        ),
-        members,
+    return ValidationSummary(
+        archive=str(archive_path.resolve()),
+        jobs=len(jobs),
+        files=file_count,
+        bytes=byte_count,
     )
 
 
@@ -276,8 +288,32 @@ def _ensure_empty_destination(destination: Path) -> None:
         destination.mkdir(parents=True)
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _restore_member(
+    archive: tarfile.TarFile, member: tarfile.TarInfo, target: Path
+) -> str:
+    source = archive.extractfile(member)
+    if source is None:
+        raise BackupValidationError(f"Could not read archive member: {member.name}")
+
+    digest = hashlib.sha256()
+    with source, target.open("xb") as output:
+        while chunk := source.read(1024 * 1024):
+            output.write(chunk)
+            digest.update(chunk)
+    target.chmod(member.mode & 0o777)
+    return digest.hexdigest()
+
+
 def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
-    summary, _ = validate_archive(archive_path)
+    summary = validate_archive(archive_path)
     destination = destination.resolve()
     _ensure_empty_destination(destination)
 
@@ -285,12 +321,13 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
     try:
         with tarfile.open(archive_path, mode="r:*") as archive:
             members, _, _ = _normalise_members(archive)
-            for archive_path_key, member in sorted(members.items(), key=lambda item: len(item[0].parts)):
+            ordered = sorted(members.items(), key=lambda item: (len(item[0].parts), str(item[0])))
+            for archive_path_key, member in ordered:
                 if archive_path_key == BACKUP_PREFIX:
                     continue
                 relative = archive_path_key.relative_to(BACKUP_PREFIX)
                 target = destination.joinpath(*relative.parts)
-                target_resolved = target.resolve()
+                target_resolved = target.resolve(strict=False)
                 if destination != target_resolved and destination not in target_resolved.parents:
                     raise BackupValidationError(f"Restore path escapes destination: {archive_path_key}")
 
@@ -300,15 +337,10 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
                     continue
 
                 target.parent.mkdir(parents=True, exist_ok=True)
-                raw = _read_member_bytes(archive, member)
-                with target.open("xb") as handle:
-                    handle.write(raw)
-                target.chmod(member.mode & 0o777)
-                extracted_hashes[target] = hashlib.sha256(raw).hexdigest()
+                extracted_hashes[target] = _restore_member(archive, member, target)
 
         for path, expected_hash in extracted_hashes.items():
-            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-            if actual_hash != expected_hash:
+            if _sha256_file(path) != expected_hash:
                 raise BackupValidationError(f"Restored file hash mismatch: {path}")
 
         if (destination / "config" / "env").exists() or (destination / ".env").exists():
@@ -318,8 +350,6 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
         # partial restore cannot remove pre-existing operator data.
         for child in list(destination.iterdir()):
             if child.is_dir() and not child.is_symlink():
-                import shutil
-
                 shutil.rmtree(child)
             else:
                 child.unlink()
@@ -351,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         if args.restore_root is None:
-            summary, _ = validate_archive(args.archive)
+            summary = validate_archive(args.archive)
         else:
             summary = restore_archive(args.archive, args.restore_root)
     except BackupValidationError as exc:

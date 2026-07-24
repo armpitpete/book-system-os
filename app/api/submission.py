@@ -19,6 +19,7 @@ JOB_TYPE_FIELD = """
           </label></p>
 """
 MARKDOWN_FIELD = "          <p><label>Markdown<br><textarea"
+MARKDOWN_TEXTAREA = '<textarea name="content"'
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -35,6 +36,8 @@ def dashboard(
     body = response.body.decode("utf-8")
     if 'name="state"' not in body:
         body = body.replace(MARKDOWN_FIELD, JOB_TYPE_FIELD + MARKDOWN_FIELD, 1)
+    if f"{MARKDOWN_TEXTAREA} required" not in body:
+        body = body.replace(MARKDOWN_TEXTAREA, f"{MARKDOWN_TEXTAREA} required", 1)
     return HTMLResponse(content=body, status_code=response.status_code)
 
 
@@ -47,6 +50,8 @@ def submit_form(
     requested_state = state.strip().lower()
     if requested_state not in DASHBOARD_JOB_STATES:
         raise HTTPException(status_code=400, detail="Invalid dashboard job type")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Markdown content is required")
 
     create_job(title=title, markdown=content, state=requested_state)
     return RedirectResponse(url="/", status_code=303)

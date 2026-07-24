@@ -74,11 +74,11 @@ def atomic_write_text(
     temporary = Path(temporary_name)
 
     try:
-        os.fchmod(descriptor, final_mode)
         with os.fdopen(descriptor, "w", encoding=encoding, newline="") as handle:
             descriptor = -1
             _write_text_file(handle, text)
             handle.flush()
+            os.fchmod(handle.fileno(), final_mode)
             os.fsync(handle.fileno())
 
         os.replace(temporary, target)

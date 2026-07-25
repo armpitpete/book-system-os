@@ -8,8 +8,10 @@ umask 022
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$ROOT_DIR/.venv/bin/python"
 LOCAL_HEALTH_URL="http://127.0.0.1:8080/health"
+LOCAL_READY_URL="http://127.0.0.1:8080/ready"
 LOCAL_STATUS_URL="http://127.0.0.1:8080/api/v1/status"
 PUBLIC_HEALTH_URL="https://publish.toiletrage.co.uk/health"
+PUBLIC_READY_URL="https://publish.toiletrage.co.uk/ready"
 PUBLIC_STATUS_URL="https://publish.toiletrage.co.uk/api/v1/status"
 
 cd "$ROOT_DIR"
@@ -39,6 +41,7 @@ echo "===== NORMALISE TRACKED PERMISSIONS ====="
 echo
 echo "===== SERVICE SOURCE READABILITY ====="
 runuser -u www-data -- test -r "$ROOT_DIR/app/services/job_queue.py"
+runuser -u www-data -- test -r "$ROOT_DIR/app/services/readiness.py"
 runuser -u www-data -- test -r "$ROOT_DIR/app/pipeline/run_pipeline.py"
 runuser -u www-data -- test -r "$ROOT_DIR/app/utils/atomic_files.py"
 echo "service-source-readability=pass"
@@ -62,15 +65,15 @@ systemctl is-active book-system-api.service
 systemctl is-active book-system-worker.service
 
 echo
-echo "===== WAIT FOR LOCAL API ====="
+echo "===== WAIT FOR LOCAL API LIVENESS ====="
 for i in {1..30}; do
   if curl -fsS "$LOCAL_HEALTH_URL" >/dev/null 2>&1; then
-    echo "API is ready"
+    echo "API process is alive"
     break
   fi
 
   if [ "$i" -eq 30 ]; then
-    echo "ERROR: API did not become ready after 30 seconds"
+    echo "ERROR: API liveness did not pass after 30 seconds"
     echo
     systemctl status book-system-api.service --no-pager -l || true
     echo
@@ -78,13 +81,41 @@ for i in {1..30}; do
     exit 1
   fi
 
-  echo "Waiting for API..."
+  echo "Waiting for API liveness..."
+  sleep 1
+done
+
+echo
+echo "===== WAIT FOR LOCAL READINESS ====="
+for i in {1..30}; do
+  if curl -fsS "$LOCAL_READY_URL" >/dev/null 2>&1; then
+    echo "Publishing service is ready"
+    break
+  fi
+
+  if [ "$i" -eq 30 ]; then
+    echo "ERROR: publishing readiness did not pass after 30 seconds"
+    echo
+    curl -sS "$LOCAL_READY_URL" || true
+    echo
+    systemctl status book-system-worker.service --no-pager -l || true
+    echo
+    journalctl -u book-system-worker.service -n 80 --no-pager || true
+    exit 1
+  fi
+
+  echo "Waiting for publishing readiness..."
   sleep 1
 done
 
 echo
 echo "===== LOCAL HEALTH ====="
 curl -fsS "$LOCAL_HEALTH_URL"
+echo
+
+echo
+echo "===== LOCAL READINESS ====="
+curl -fsS "$LOCAL_READY_URL"
 echo
 
 echo
@@ -95,6 +126,11 @@ echo
 echo
 echo "===== PUBLIC HEALTH ====="
 curl -fsS -4 "$PUBLIC_HEALTH_URL"
+echo
+
+echo
+echo "===== PUBLIC READINESS ====="
+curl -fsS -4 "$PUBLIC_READY_URL"
 echo
 
 echo

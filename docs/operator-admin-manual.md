@@ -181,6 +181,86 @@ After cleanup:
 - confirm archived jobs moved to archived state
 - confirm active dashboard filters still show the expected jobs
 
+## Interrupted-job recovery
+
+The worker writes a structured JSON lease to each active job's `.lock` file. The lease records:
+
+- a unique worker ID;
+- process ID and hostname;
+- operating-system boot identity where available;
+- process start identity where available;
+- acquisition and heartbeat timestamps.
+
+Heartbeat age is useful evidence, but elapsed time alone never authorises recovery. A recovery is allowed only when the previous ownership is proven invalid or a running job has no lock owner.
+
+Use the operator CLI from `/opt/book-system`.
+
+Preview all recovery-relevant jobs without changing them:
+
+```bash
+sudo -u www-data .venv/bin/python scripts/recover_jobs.py preview
+```
+
+Preview one job:
+
+```bash
+sudo -u www-data .venv/bin/python scripts/recover_jobs.py preview \
+  --job-id JOB_ID
+```
+
+The important classifications are:
+
+- `active` — the recorded process still owns a running job; recovery is refused;
+- `abandoned` — a running job has no owner or its same-host owner is proven dead;
+- `stale-lock` — a queued job retains a lock whose owner is proven dead;
+- `uncertain` — ownership is remote, malformed or cannot be proved; recovery is refused;
+- `owned-lock` — a live process owns a lock while the status is not running; stop and investigate.
+
+To return a proven abandoned job to the queue:
+
+```bash
+sudo -u www-data .venv/bin/python scripts/recover_jobs.py recover JOB_ID \
+  --to queued \
+  --operator "OPERATOR NAME" \
+  --reason "Worker was deliberately terminated during controlled recovery"
+```
+
+To mark it failed instead:
+
+```bash
+sudo -u www-data .venv/bin/python scripts/recover_jobs.py recover JOB_ID \
+  --to failed \
+  --operator "OPERATOR NAME" \
+  --reason "Interrupted export requires inspection before retry"
+```
+
+Recovery preserves:
+
+- `input/book.md`;
+- `metadata.json`;
+- existing work, output and log files;
+- all previous `events.jsonl` history.
+
+A successful action adds `recovery-authorised` and `recovered` events and records the operator, reason, previous status and recovery count in `status.json`.
+
+## Recovery operating rule
+
+Always run `preview` immediately before `recover`.
+
+Do not recover a job classified as `active`, `uncertain` or `owned-lock`.
+
+Do not edit or delete `.lock` manually. The CLI rechecks ownership and refuses the action if ownership changes.
+
+After requeueing an abandoned job, confirm:
+
+- the lock was released;
+- status changed to `queued` and then `running`;
+- recovery events are present;
+- original input and metadata remain unchanged;
+- the job finishes predictably as `done` or `failed`.
+
+After marking an abandoned job failed, inspect its preserved logs before using the ordinary failed-job Retry control.
+
 ## Dashboard operating checks
 
 Use the dashboard to check:
@@ -224,6 +304,9 @@ Stop and investigate if:
 - `/api/v1/status` returns non-JSON or `ok` is not true
 - Retry appears for a non-failed job
 - cleanup preview includes production, queued, or running jobs
+- recovery preview reports `uncertain` or `owned-lock`
+- an active job appears recoverable
+- a recovery command does not record operator and reason
 - a deploy script reports API readiness failure
 
 ## Current manual gap

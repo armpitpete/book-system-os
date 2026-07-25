@@ -8,6 +8,7 @@ import shutil
 import sys
 import tarfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 BACKUP_PREFIX = PurePosixPath("book-system-backup")
@@ -15,6 +16,7 @@ BACKUP_FORMAT = "book-system-job-store"
 BACKUP_SCHEMA_VERSION = 1
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 REQUIRED_JOB_DIRECTORIES = ("input", "work", "output", "logs")
+EVENT_HISTORY_REQUIRED_AT = datetime(2026, 6, 21, 10, 33, 9, tzinfo=timezone.utc)
 
 
 class BackupValidationError(RuntimeError):
@@ -27,6 +29,7 @@ class ValidationSummary:
     jobs: int
     files: int
     bytes: int
+    legacy_jobs_without_events: int
     restored_to: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -35,6 +38,7 @@ class ValidationSummary:
             "jobs": self.jobs,
             "files": self.files,
             "bytes": self.bytes,
+            "legacy_jobs_without_events": self.legacy_jobs_without_events,
             "restored_to": self.restored_to,
         }
 
@@ -66,6 +70,25 @@ def _parse_json_object(raw: bytes, name: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise BackupValidationError(f"JSON record must be an object: {name}")
     return value
+
+
+def _parse_utc_timestamp(value: object, name: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise BackupValidationError(f"Timestamp is missing or invalid: {name}")
+
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise BackupValidationError(f"Timestamp is missing or invalid: {name}") from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_events(raw: bytes, name: str) -> None:
@@ -169,7 +192,7 @@ def _validate_job(
     archive: tarfile.TarFile,
     members: dict[PurePosixPath, tarfile.TarInfo],
     job_id: str,
-) -> None:
+) -> bool:
     job_root = BACKUP_PREFIX / "books" / "jobs" / job_id
     _require_directory(members, job_root)
     for directory in REQUIRED_JOB_DIRECTORIES:
@@ -178,11 +201,9 @@ def _validate_job(
     metadata_raw = _read_required_file(archive, members, job_root / "metadata.json")
     status_raw = _read_required_file(archive, members, job_root / "status.json")
     _require_file_member(members, job_root / "input" / "book.md")
-    events_raw = _read_required_file(archive, members, job_root / "events.jsonl")
 
     metadata = _parse_json_object(metadata_raw, f"{job_id}/metadata.json")
     status = _parse_json_object(status_raw, f"{job_id}/status.json")
-    _validate_events(events_raw, f"{job_id}/events.jsonl")
 
     if metadata.get("job_id") != job_id:
         raise BackupValidationError(
@@ -190,6 +211,28 @@ def _validate_job(
         )
     if not isinstance(status.get("status"), str) or not status.get("status"):
         raise BackupValidationError(f"Job status is missing or invalid: {job_id}")
+
+    events_path = job_root / "events.jsonl"
+    events_member = members.get(events_path)
+    legacy_without_events = False
+
+    if events_member is None:
+        created_at = _parse_utc_timestamp(
+            metadata.get("created_at"),
+            f"{job_id}/metadata.json created_at",
+        )
+        if created_at >= EVENT_HISTORY_REQUIRED_AT:
+            raise BackupValidationError(
+                f"Modern job is missing required event history: {events_path}"
+            )
+        legacy_without_events = True
+    elif not events_member.isfile():
+        raise BackupValidationError(f"Event history path is not a file: {events_path}")
+    else:
+        _validate_events(
+            _read_member_bytes(archive, events_member),
+            f"{job_id}/events.jsonl",
+        )
 
     manifest_path = job_root / "manifest.json"
     manifest_member = members.get(manifest_path)
@@ -219,6 +262,8 @@ def _validate_job(
         if not manifest_member.isfile():
             raise BackupValidationError(f"Manifest path is not a file: {manifest_path}")
         _parse_json_object(_read_member_bytes(archive, manifest_member), f"{job_id}/manifest.json")
+
+    return legacy_without_events
 
 
 def validate_archive(archive_path: Path) -> ValidationSummary:
@@ -267,14 +312,16 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
                 raise BackupValidationError(f"Ephemeral lock file is present: {path}")
 
         jobs = _job_ids(members)
-        for job_id in jobs:
-            _validate_job(archive, members, job_id)
+        legacy_jobs_without_events = sum(
+            1 for job_id in jobs if _validate_job(archive, members, job_id)
+        )
 
     return ValidationSummary(
         archive=str(archive_path.resolve()),
         jobs=len(jobs),
         files=file_count,
         bytes=byte_count,
+        legacy_jobs_without_events=legacy_jobs_without_events,
     )
 
 
@@ -360,6 +407,7 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
         jobs=summary.jobs,
         files=summary.files,
         bytes=summary.bytes,
+        legacy_jobs_without_events=summary.legacy_jobs_without_events,
         restored_to=str(destination),
     )
 

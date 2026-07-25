@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import traceback
 from pathlib import Path
@@ -8,6 +7,7 @@ from pathlib import Path
 from app.pipeline.exporters import pandoc_export
 from app.pipeline.structural import structural_cleanup
 from app.services.job_queue import read_status, write_status, utc_now
+from app.utils.atomic_files import atomic_write_json
 
 
 def run_pipeline(job_dir: Path) -> int:
@@ -37,7 +37,7 @@ def run_pipeline(job_dir: Path) -> int:
             "outputs": outputs,
             "status": final_status,
         }
-        (job_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        atomic_write_json(job_dir / "manifest.json", manifest)
         return 0
     except Exception as exc:
         (job_dir / "logs" / "error.log").write_text(traceback.format_exc(), encoding="utf-8")

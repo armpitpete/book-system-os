@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.utils.atomic_files import atomic_write_json
 from app.utils.paths import jobs_dir
 
 SAFE_TITLE_RE = re.compile(r"[^a-zA-Z0-9._ -]+")
@@ -105,7 +106,7 @@ def write_status(
     }
     if extra:
         data.update(extra)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    atomic_write_json(path, data)
 
 
 def set_job_state(job_dir: Path, state: str) -> None:
@@ -121,7 +122,7 @@ def set_job_state(job_dir: Path, state: str) -> None:
 
     data["state"] = normalise_job_state(state)
     data["updated_at"] = utc_now()
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    atomic_write_json(path, data)
 
 
 def parse_utc_timestamp(value: Any) -> datetime | None:
@@ -198,7 +199,7 @@ def cleanup_old_test_jobs(*, older_than_days: int = 7, dry_run: bool = True) -> 
         status["archived_at"] = archived_at
         status["archive_reason"] = f"Archived by cleanup helper; older than {days} days"
         status["updated_at"] = archived_at
-        status_path(job).write_text(json.dumps(status, indent=2), encoding="utf-8")
+        atomic_write_json(status_path(job), status)
         append_job_event(
             job,
             "archived",
@@ -301,7 +302,7 @@ def create_job(*, title: str, markdown: str, state: str = DEFAULT_JOB_STATE) -> 
         "slug": slugify_title(title),
         "created_at": utc_now(),
     }
-    (job_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    atomic_write_json(job_dir / "metadata.json", meta)
     (job_dir / "input" / "book.md").write_text(markdown, encoding="utf-8")
     write_status(job_dir, status="queued", step="waiting", message="Job queued", state=state)
     append_job_event(

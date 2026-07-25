@@ -63,7 +63,9 @@ The validator accepts only the exact historical pre-cutover shape above. It stil
 
 Cleanup happens after a job has completed. It may therefore change the authoritative `status.json.state` of an eligible Test job from `test` to `archived` while the immutable manifest continues to record the original Test classification.
 
-The validator accepts that mismatch only when all of the following evidence is present:
+### Evidential cleanup transition
+
+The validator accepts a current cleanup mismatch only when all of the following evidence is present:
 
 - authoritative `status.json.status` is still `done`;
 - the manifest's embedded state is exactly `test`;
@@ -73,7 +75,27 @@ The validator accepts that mismatch only when all of the following evidence is p
 - `events.jsonl` contains a matching `archived` event with the same reason and age threshold;
 - the matching event timestamp is no earlier than `archived_at` and no more than one minute later.
 
-This is the only accepted post-completion state mismatch. Production-to-archived transitions, missing archive events, altered reasons, inconsistent timestamps and arbitrary state changes fail validation. Restore preserves the original status, manifest and event bytes without normalising them.
+Production-to-archived transitions, missing archive events, altered reasons, inconsistent timestamps and arbitrary state changes fail validation.
+
+### Legacy generic-setter transition
+
+The first generic lifecycle setter was introduced by commit `68618f44300ab307789fd46387d150cc38141229` at `2026-06-21T08:08:10Z`. It changed only `state` and `updated_at`; it did not record an archive reason, archive timestamp or archive event. The evidential cleanup helper became available when PR #23 merged at `2026-06-21T13:52:38Z`.
+
+A completed Test job changed to `archived` inside that historical interval may therefore have no cleanup fields. The validator accepts that older shape only when all of these conditions hold:
+
+- metadata creation, manifest completion and authoritative update all fall in chronological order inside the exact historical interval;
+- the authoritative update occurs less than five minutes after manifest completion;
+- authoritative status is exactly `done`, `complete`, `Build complete`;
+- the manifest is the exact accepted pre-cutover successful snapshot: `running`, `pandoc-export`, `Building PDF/EPUB/DOCX outputs`;
+- embedded state is exactly `test` and authoritative state is exactly `archived`;
+- `archived_at` and `archive_reason` are absent and no `archived` event exists;
+- status and manifest contain the same positive `retry_count` and identical `last_retry_at`;
+- `events.jsonl` contains a matching retry event at that exact timestamp and count;
+- every declared output exists and is non-empty.
+
+The summary reports accepted records as `legacy_manual_archived_state_transitions`. Jobs outside the historical window, jobs without exact retry evidence, production-origin jobs and later unexplained state changes remain invalid.
+
+Both accepted transition types are preservation rules only. Restore keeps the original status, manifest and event bytes without normalising or fabricating history.
 
 ## Consistency rule
 
@@ -142,7 +164,8 @@ Validation rejects:
 - modern completed manifests without embedded final status `done`;
 - pre-cutover manifests that do not match the exact historical successful pipeline snapshot;
 - unexplained manifest/status state disagreement;
-- archived Test jobs without the exact cleanup status fields and matching archive event;
+- current archived Test jobs without exact cleanup fields and a matching archive event;
+- alleged legacy manual transitions outside the exact historical window or without exact retry evidence;
 - any production-to-archived manifest/status mismatch.
 
 ## Clean-system restore rehearsal
@@ -185,7 +208,7 @@ For jobs with event history, validate every populated line as JSON. For an accep
 
 For an accepted pre-cutover successful manifest, confirm that the source and restored `manifest.json` hashes are identical and that the authoritative restored `status.json` remains `done`.
 
-For an archived Test job, confirm that source and restored `status.json`, `manifest.json` and `events.jsonl` hashes are identical. The manifest should still record `test`; authoritative status should still record `archived` with its original cleanup evidence.
+For an archived Test job, confirm that source and restored `status.json`, `manifest.json` and `events.jsonl` hashes are identical. The manifest should still record `test`; authoritative status should still record `archived`. Current cleanup records retain their cleanup evidence. Accepted legacy generic-setter records retain the deliberate absence of archive evidence and their exact retry history.
 
 Compare selected source and restored records without modifying either copy:
 
@@ -242,6 +265,7 @@ For each controlled rehearsal, record without credentials:
 - number and identifiers of representative test and production jobs;
 - count of accepted `legacy_jobs_without_events`;
 - count of accepted `legacy_manifests_without_final_status`;
+- count of accepted `legacy_manual_archived_state_transitions`;
 - restore destination;
 - validation output;
 - source/restored hash comparison results;

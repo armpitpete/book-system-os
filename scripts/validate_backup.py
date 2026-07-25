@@ -17,6 +17,9 @@ BACKUP_SCHEMA_VERSION = 1
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 REQUIRED_JOB_DIRECTORIES = ("input", "work", "output", "logs")
 EVENT_HISTORY_REQUIRED_AT = datetime(2026, 6, 21, 10, 33, 9, tzinfo=timezone.utc)
+FINAL_MANIFEST_STATUS_REQUIRED_AT = datetime(2026, 7, 19, 18, 56, 19, tzinfo=timezone.utc)
+LEGACY_MANIFEST_STEP = "pandoc-export"
+LEGACY_MANIFEST_MESSAGE = "Building PDF/EPUB/DOCX outputs"
 
 
 class BackupValidationError(RuntimeError):
@@ -30,6 +33,7 @@ class ValidationSummary:
     files: int
     bytes: int
     legacy_jobs_without_events: int
+    legacy_manifests_without_final_status: int
     restored_to: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -39,6 +43,7 @@ class ValidationSummary:
             "files": self.files,
             "bytes": self.bytes,
             "legacy_jobs_without_events": self.legacy_jobs_without_events,
+            "legacy_manifests_without_final_status": self.legacy_manifests_without_final_status,
             "restored_to": self.restored_to,
         }
 
@@ -46,7 +51,6 @@ class ValidationSummary:
 def _safe_member_path(name: str) -> PurePosixPath:
     if not name or "\\" in name:
         raise BackupValidationError(f"Unsafe archive member path: {name!r}")
-
     path = PurePosixPath(name)
     if path.is_absolute() or ".." in path.parts:
         raise BackupValidationError(f"Unsafe archive member path: {name!r}")
@@ -75,19 +79,15 @@ def _parse_json_object(raw: bytes, name: str) -> dict[str, object]:
 def _parse_utc_timestamp(value: object, name: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise BackupValidationError(f"Timestamp is missing or invalid: {name}")
-
     raw = value.strip()
     if raw.endswith("Z"):
         raw = f"{raw[:-1]}+00:00"
-
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise BackupValidationError(f"Timestamp is missing or invalid: {name}") from exc
-
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-
     return parsed.astimezone(timezone.utc)
 
 
@@ -96,7 +96,6 @@ def _validate_events(raw: bytes, name: str) -> None:
         lines = raw.decode("utf-8").splitlines()
     except UnicodeDecodeError as exc:
         raise BackupValidationError(f"Event history is not UTF-8: {name}") from exc
-
     populated = 0
     for number, line in enumerate(lines, start=1):
         if not line.strip():
@@ -118,7 +117,6 @@ def _normalise_members(
     members: dict[PurePosixPath, tarfile.TarInfo] = {}
     file_count = 0
     byte_count = 0
-
     for member in archive.getmembers():
         path = _safe_member_path(member.name.rstrip("/"))
         if path in members:
@@ -131,7 +129,6 @@ def _normalise_members(
         if member.isfile():
             file_count += 1
             byte_count += member.size
-
     return members, file_count, byte_count
 
 
@@ -165,7 +162,6 @@ def _validate_config_shape(raw: bytes) -> None:
         lines = raw.decode("utf-8").splitlines()
     except UnicodeDecodeError as exc:
         raise BackupValidationError("config/env.keys is not UTF-8") from exc
-
     keys = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
     if not keys:
         raise BackupValidationError("config/env.keys contains no configuration keys")
@@ -188,22 +184,85 @@ def _job_ids(members: dict[PurePosixPath, tarfile.TarInfo]) -> list[str]:
     return sorted(ids)
 
 
+def _validate_manifest_outputs(
+    manifest: dict[str, object],
+    members: dict[PurePosixPath, tarfile.TarInfo],
+    job_root: PurePosixPath,
+    job_id: str,
+) -> None:
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, dict) or not outputs:
+        raise BackupValidationError(f"Completed job manifest has no outputs: {job_id}")
+    for output_name in outputs.values():
+        if (
+            not isinstance(output_name, str)
+            or not output_name
+            or "/" in output_name
+            or "\\" in output_name
+            or PurePosixPath(output_name).name != output_name
+        ):
+            raise BackupValidationError(f"Unsafe manifest output name in job {job_id}")
+        output_path = job_root / "output" / output_name
+        output_member = members.get(output_path)
+        if output_member is None or not output_member.isfile() or output_member.size <= 0:
+            raise BackupValidationError(f"Manifest output is missing or empty: {output_path}")
+
+
+def _validate_completed_manifest(
+    manifest: dict[str, object],
+    status: dict[str, object],
+    members: dict[PurePosixPath, tarfile.TarInfo],
+    job_root: PurePosixPath,
+    job_id: str,
+) -> bool:
+    _validate_manifest_outputs(manifest, members, job_root, job_id)
+    manifest_status = manifest.get("status")
+    if isinstance(manifest_status, dict) and manifest_status.get("status") == "done":
+        return False
+
+    completed_at = _parse_utc_timestamp(
+        manifest.get("completed_at"), f"{job_id}/manifest.json completed_at"
+    )
+    legacy_shape = (
+        completed_at < FINAL_MANIFEST_STATUS_REQUIRED_AT
+        and isinstance(manifest_status, dict)
+        and manifest_status.get("status") == "running"
+        and manifest_status.get("step") == LEGACY_MANIFEST_STEP
+        and manifest_status.get("message") == LEGACY_MANIFEST_MESSAGE
+    )
+    if not legacy_shape:
+        raise BackupValidationError(f"Completed job manifest is not final: {job_id}")
+
+    external_state = status.get("state")
+    embedded_state = manifest_status.get("state")
+    if (
+        isinstance(external_state, str)
+        and isinstance(embedded_state, str)
+        and external_state != embedded_state
+    ):
+        raise BackupValidationError(f"Legacy manifest state does not match final status: {job_id}")
+    return True
+
+
 def _validate_job(
     archive: tarfile.TarFile,
     members: dict[PurePosixPath, tarfile.TarInfo],
     job_id: str,
-) -> bool:
+) -> tuple[bool, bool]:
     job_root = BACKUP_PREFIX / "books" / "jobs" / job_id
     _require_directory(members, job_root)
     for directory in REQUIRED_JOB_DIRECTORIES:
         _require_directory(members, job_root / directory)
 
-    metadata_raw = _read_required_file(archive, members, job_root / "metadata.json")
-    status_raw = _read_required_file(archive, members, job_root / "status.json")
+    metadata = _parse_json_object(
+        _read_required_file(archive, members, job_root / "metadata.json"),
+        f"{job_id}/metadata.json",
+    )
+    status = _parse_json_object(
+        _read_required_file(archive, members, job_root / "status.json"),
+        f"{job_id}/status.json",
+    )
     _require_file_member(members, job_root / "input" / "book.md")
-
-    metadata = _parse_json_object(metadata_raw, f"{job_id}/metadata.json")
-    status = _parse_json_object(status_raw, f"{job_id}/status.json")
 
     if metadata.get("job_id") != job_id:
         raise BackupValidationError(
@@ -215,11 +274,9 @@ def _validate_job(
     events_path = job_root / "events.jsonl"
     events_member = members.get(events_path)
     legacy_without_events = False
-
     if events_member is None:
         created_at = _parse_utc_timestamp(
-            metadata.get("created_at"),
-            f"{job_id}/metadata.json created_at",
+            metadata.get("created_at"), f"{job_id}/metadata.json created_at"
         )
         if created_at >= EVENT_HISTORY_REQUIRED_AT:
             raise BackupValidationError(
@@ -230,46 +287,32 @@ def _validate_job(
         raise BackupValidationError(f"Event history path is not a file: {events_path}")
     else:
         _validate_events(
-            _read_member_bytes(archive, events_member),
-            f"{job_id}/events.jsonl",
+            _read_member_bytes(archive, events_member), f"{job_id}/events.jsonl"
         )
 
     manifest_path = job_root / "manifest.json"
     manifest_member = members.get(manifest_path)
+    legacy_manifest = False
     if status.get("status") == "done":
-        manifest_raw = _read_required_file(archive, members, manifest_path)
-        manifest = _parse_json_object(manifest_raw, f"{job_id}/manifest.json")
-        manifest_status = manifest.get("status")
-        if not isinstance(manifest_status, dict) or manifest_status.get("status") != "done":
-            raise BackupValidationError(f"Completed job manifest is not final: {job_id}")
-        outputs = manifest.get("outputs")
-        if not isinstance(outputs, dict) or not outputs:
-            raise BackupValidationError(f"Completed job manifest has no outputs: {job_id}")
-        for output_name in outputs.values():
-            if (
-                not isinstance(output_name, str)
-                or not output_name
-                or "/" in output_name
-                or "\\" in output_name
-                or PurePosixPath(output_name).name != output_name
-            ):
-                raise BackupValidationError(f"Unsafe manifest output name in job {job_id}")
-            output_path = job_root / "output" / output_name
-            output_member = members.get(output_path)
-            if output_member is None or not output_member.isfile() or output_member.size <= 0:
-                raise BackupValidationError(f"Manifest output is missing or empty: {output_path}")
+        manifest = _parse_json_object(
+            _read_required_file(archive, members, manifest_path),
+            f"{job_id}/manifest.json",
+        )
+        legacy_manifest = _validate_completed_manifest(
+            manifest, status, members, job_root, job_id
+        )
     elif manifest_member is not None:
         if not manifest_member.isfile():
             raise BackupValidationError(f"Manifest path is not a file: {manifest_path}")
-        _parse_json_object(_read_member_bytes(archive, manifest_member), f"{job_id}/manifest.json")
-
-    return legacy_without_events
+        _parse_json_object(
+            _read_member_bytes(archive, manifest_member), f"{job_id}/manifest.json"
+        )
+    return legacy_without_events, legacy_manifest
 
 
 def validate_archive(archive_path: Path) -> ValidationSummary:
     if not archive_path.is_file():
         raise BackupValidationError(f"Backup archive does not exist: {archive_path}")
-
     try:
         archive = tarfile.open(archive_path, mode="r:*")
     except (tarfile.TarError, OSError) as exc:
@@ -277,16 +320,21 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
 
     with archive:
         members, file_count, byte_count = _normalise_members(archive)
-        _require_directory(members, BACKUP_PREFIX)
-        _require_directory(members, BACKUP_PREFIX / "books")
-        _require_directory(members, BACKUP_PREFIX / "books" / "jobs")
-        _require_directory(members, BACKUP_PREFIX / "logs")
-        _require_directory(members, BACKUP_PREFIX / "config")
+        for required in (
+            BACKUP_PREFIX,
+            BACKUP_PREFIX / "books",
+            BACKUP_PREFIX / "books" / "jobs",
+            BACKUP_PREFIX / "logs",
+            BACKUP_PREFIX / "config",
+        ):
+            _require_directory(members, required)
 
-        metadata_raw = _read_required_file(
-            archive, members, BACKUP_PREFIX / "backup-metadata.json"
+        metadata = _parse_json_object(
+            _read_required_file(
+                archive, members, BACKUP_PREFIX / "backup-metadata.json"
+            ),
+            "backup-metadata.json",
         )
-        metadata = _parse_json_object(metadata_raw, "backup-metadata.json")
         if metadata.get("format") != BACKUP_FORMAT:
             raise BackupValidationError("Unknown backup format")
         if metadata.get("schema_version") != BACKUP_SCHEMA_VERSION:
@@ -294,10 +342,11 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
         if not isinstance(metadata.get("created_at"), str) or not metadata.get("created_at"):
             raise BackupValidationError("Backup metadata has no creation timestamp")
 
-        config_raw = _read_required_file(
-            archive, members, BACKUP_PREFIX / "config" / "env.keys"
+        _validate_config_shape(
+            _read_required_file(
+                archive, members, BACKUP_PREFIX / "config" / "env.keys"
+            )
         )
-        _validate_config_shape(config_raw)
 
         forbidden = (
             BACKUP_PREFIX / "config" / "env",
@@ -312,8 +361,10 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
                 raise BackupValidationError(f"Ephemeral lock file is present: {path}")
 
         jobs = _job_ids(members)
-        legacy_jobs_without_events = sum(
-            1 for job_id in jobs if _validate_job(archive, members, job_id)
+        compatibility = [_validate_job(archive, members, job_id) for job_id in jobs]
+        legacy_jobs_without_events = sum(1 for events, _ in compatibility if events)
+        legacy_manifests_without_final_status = sum(
+            1 for _, manifest in compatibility if manifest
         )
 
     return ValidationSummary(
@@ -322,6 +373,7 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
         files=file_count,
         bytes=byte_count,
         legacy_jobs_without_events=legacy_jobs_without_events,
+        legacy_manifests_without_final_status=legacy_manifests_without_final_status,
     )
 
 
@@ -349,7 +401,6 @@ def _restore_member(
     source = archive.extractfile(member)
     if source is None:
         raise BackupValidationError(f"Could not read archive member: {member.name}")
-
     digest = hashlib.sha256()
     with source, target.open("xb") as output:
         while chunk := source.read(1024 * 1024):
@@ -363,12 +414,13 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
     summary = validate_archive(archive_path)
     destination = destination.resolve()
     _ensure_empty_destination(destination)
-
     extracted_hashes: dict[Path, str] = {}
     try:
         with tarfile.open(archive_path, mode="r:*") as archive:
             members, _, _ = _normalise_members(archive)
-            ordered = sorted(members.items(), key=lambda item: (len(item[0].parts), str(item[0])))
+            ordered = sorted(
+                members.items(), key=lambda item: (len(item[0].parts), str(item[0]))
+            )
             for archive_path_key, member in ordered:
                 if archive_path_key == BACKUP_PREFIX:
                     continue
@@ -376,25 +428,24 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
                 target = destination.joinpath(*relative.parts)
                 target_resolved = target.resolve(strict=False)
                 if destination != target_resolved and destination not in target_resolved.parents:
-                    raise BackupValidationError(f"Restore path escapes destination: {archive_path_key}")
-
+                    raise BackupValidationError(
+                        f"Restore path escapes destination: {archive_path_key}"
+                    )
                 if member.isdir():
                     target.mkdir(parents=True, exist_ok=True)
                     target.chmod(member.mode & 0o777)
                     continue
-
                 target.parent.mkdir(parents=True, exist_ok=True)
                 extracted_hashes[target] = _restore_member(archive, member, target)
 
         for path, expected_hash in extracted_hashes.items():
             if _sha256_file(path) != expected_hash:
                 raise BackupValidationError(f"Restored file hash mismatch: {path}")
-
         if (destination / "config" / "env").exists() or (destination / ".env").exists():
-            raise BackupValidationError("Restore unexpectedly contains usable runtime configuration")
+            raise BackupValidationError(
+                "Restore unexpectedly contains usable runtime configuration"
+            )
     except Exception:
-        # The destination was required to be empty before this operation, so cleaning a failed
-        # partial restore cannot remove pre-existing operator data.
         for child in list(destination.iterdir()):
             if child.is_dir() and not child.is_symlink():
                 shutil.rmtree(child)
@@ -408,6 +459,9 @@ def restore_archive(archive_path: Path, destination: Path) -> ValidationSummary:
         files=summary.files,
         bytes=summary.bytes,
         legacy_jobs_without_events=summary.legacy_jobs_without_events,
+        legacy_manifests_without_final_status=(
+            summary.legacy_manifests_without_final_status
+        ),
         restored_to=str(destination),
     )
 
@@ -428,14 +482,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        if args.restore_root is None:
-            summary = validate_archive(args.archive)
-        else:
-            summary = restore_archive(args.archive, args.restore_root)
+        summary = (
+            validate_archive(args.archive)
+            if args.restore_root is None
+            else restore_archive(args.archive, args.restore_root)
+        )
     except BackupValidationError as exc:
         print(f"backup-validation=fail: {exc}", file=sys.stderr)
         return 1
-
     print(json.dumps(summary.as_dict(), indent=2, sort_keys=True))
     print("backup-validation=pass")
     if args.restore_root is not None:

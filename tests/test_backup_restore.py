@@ -62,6 +62,10 @@ def make_job(
     status_name: str = "done",
     created_at: str = "2026-07-24T20:00:00+00:00",
     with_events: bool = True,
+    manifest_completed_at: str = "2026-07-24T20:01:00+00:00",
+    manifest_status_name: str | None = None,
+    manifest_step: str | None = None,
+    manifest_message: str | None = None,
 ) -> Path:
     job = root / "books" / "jobs" / job_id
     for directory in ("input", "work", "output", "logs"):
@@ -110,11 +114,20 @@ def make_job(
             "docx": "book.docx",
         }
         for filename in outputs.values():
-            (job / "output" / filename).write_bytes(f"fixture:{job_id}:{filename}".encode("utf-8"))
+            (job / "output" / filename).write_bytes(
+                f"fixture:{job_id}:{filename}".encode("utf-8")
+            )
+        manifest_status = dict(status)
+        if manifest_status_name is not None:
+            manifest_status["status"] = manifest_status_name
+        if manifest_step is not None:
+            manifest_status["step"] = manifest_step
+        if manifest_message is not None:
+            manifest_status["message"] = manifest_message
         manifest = {
-            "completed_at": "2026-07-24T20:01:00+00:00",
+            "completed_at": manifest_completed_at,
             "outputs": outputs,
-            "status": status,
+            "status": manifest_status,
         }
         (job / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -190,6 +203,7 @@ def test_backup_validates_and_restores_complete_store(tmp_path: Path) -> None:
     assert "backup-validation=pass" in restore.stdout
     assert "backup-restore=pass" in restore.stdout
     assert '"legacy_jobs_without_events": 0' in restore.stdout
+    assert '"legacy_manifests_without_final_status": 0' in restore.stdout
     assert not (restore_root / "config" / "env").exists()
 
     env_keys = (restore_root / "config" / "env.keys").read_text(encoding="utf-8")
@@ -253,6 +267,77 @@ def test_backup_preserves_legacy_job_without_event_history(tmp_path: Path) -> No
     assert (
         restore_root / "books" / "jobs" / modern_job.name / "events.jsonl"
     ).read_bytes() == (modern_job / "events.jsonl").read_bytes()
+
+
+def test_backup_preserves_exact_legacy_successful_manifest(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    legacy_job = make_job(
+        root,
+        "20260701-120000-legacy-manifest",
+        state="production",
+        created_at="2026-07-01T12:00:00+00:00",
+        manifest_completed_at="2026-07-01T12:01:00+00:00",
+        manifest_status_name="running",
+        manifest_step="pandoc-export",
+        manifest_message="Building PDF/EPUB/DOCX outputs",
+    )
+    archive = tmp_path / "legacy-manifest.tar.gz"
+
+    result = create_backup(root, archive)
+
+    assert result.returncode == 0, result.stderr
+    assert '"legacy_manifests_without_final_status": 1' in result.stdout
+    assert "backup=pass" in result.stdout
+
+    restore_root = tmp_path / "restored"
+    restore = run_command(
+        sys.executable,
+        str(VALIDATOR),
+        str(archive),
+        "--restore-root",
+        str(restore_root),
+    )
+
+    assert restore.returncode == 0, restore.stderr
+    assert '"legacy_manifests_without_final_status": 1' in restore.stdout
+    restored_manifest = restore_root / "books" / "jobs" / legacy_job.name / "manifest.json"
+    assert restored_manifest.read_bytes() == (legacy_job / "manifest.json").read_bytes()
+
+
+def test_validator_rejects_modern_or_inexact_legacy_manifest(tmp_path: Path) -> None:
+    modern_root = make_root(tmp_path / "modern")
+    make_job(
+        modern_root,
+        "20260720-120000-modern-manifest",
+        manifest_completed_at="2026-07-20T12:01:00+00:00",
+        manifest_status_name="running",
+        manifest_step="pandoc-export",
+        manifest_message="Building PDF/EPUB/DOCX outputs",
+    )
+    modern_archive = tmp_path / "modern-manifest.tar.gz"
+
+    modern = create_backup(modern_root, modern_archive)
+
+    assert modern.returncode != 0
+    assert "Completed job manifest is not final" in modern.stderr
+    assert not modern_archive.exists()
+
+    wrong_root = make_root(tmp_path / "wrong")
+    make_job(
+        wrong_root,
+        "20260701-120000-wrong-manifest",
+        manifest_completed_at="2026-07-01T12:01:00+00:00",
+        manifest_status_name="running",
+        manifest_step="unexpected-step",
+        manifest_message="Building PDF/EPUB/DOCX outputs",
+    )
+    wrong_archive = tmp_path / "wrong-manifest.tar.gz"
+
+    wrong = create_backup(wrong_root, wrong_archive)
+
+    assert wrong.returncode != 0
+    assert "Completed job manifest is not final" in wrong.stderr
+    assert not wrong_archive.exists()
 
 
 def test_validator_rejects_modern_job_without_event_history(tmp_path: Path) -> None:

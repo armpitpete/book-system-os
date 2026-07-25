@@ -60,6 +60,8 @@ def make_job(
     *,
     state: str = "test",
     status_name: str = "done",
+    created_at: str = "2026-07-24T20:00:00+00:00",
+    with_events: bool = True,
 ) -> Path:
     job = root / "books" / "jobs" / job_id
     for directory in ("input", "work", "output", "logs"):
@@ -69,7 +71,7 @@ def make_job(
         "job_id": job_id,
         "title": f"Backup fixture {job_id}",
         "slug": f"backup-fixture-{job_id}",
-        "created_at": "2026-07-24T20:00:00+00:00",
+        "created_at": created_at,
     }
     status = {
         "state": state,
@@ -85,14 +87,20 @@ def make_job(
     )
     (job / "work" / "book-clean.md").write_text("# Backup fixture\n", encoding="utf-8")
     (job / "logs" / "build.log").write_text("build complete\n", encoding="utf-8")
-    events = (
-        {"created_at": "2026-07-24T20:00:00+00:00", "event": "created", "message": "Job queued"},
-        {"created_at": "2026-07-24T20:01:00+00:00", "event": status_name, "message": status["message"]},
-    )
-    (job / "events.jsonl").write_text(
-        "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
-        encoding="utf-8",
-    )
+
+    if with_events:
+        events = (
+            {"created_at": created_at, "event": "created", "message": "Job queued"},
+            {
+                "created_at": "2026-07-24T20:01:00+00:00",
+                "event": status_name,
+                "message": status["message"],
+            },
+        )
+        (job / "events.jsonl").write_text(
+            "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+            encoding="utf-8",
+        )
 
     if status_name == "done":
         outputs = {
@@ -181,6 +189,7 @@ def test_backup_validates_and_restores_complete_store(tmp_path: Path) -> None:
     assert restore.returncode == 0, restore.stderr
     assert "backup-validation=pass" in restore.stdout
     assert "backup-restore=pass" in restore.stdout
+    assert '"legacy_jobs_without_events": 0' in restore.stdout
     assert not (restore_root / "config" / "env").exists()
 
     env_keys = (restore_root / "config" / "env.keys").read_text(encoding="utf-8")
@@ -208,6 +217,75 @@ def test_backup_validates_and_restores_complete_store(tmp_path: Path) -> None:
             "output/book.docx",
         ):
             assert (restored_job / relative).read_bytes() == (source_job / relative).read_bytes()
+
+
+def test_backup_preserves_legacy_job_without_event_history(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    legacy_job = make_job(
+        root,
+        "20260620-162235-legacy01",
+        state="production",
+        created_at="2026-06-20T16:22:35+00:00",
+        with_events=False,
+    )
+    modern_job = make_job(root, "20260724-200000-modern01", state="test")
+    archive = tmp_path / "legacy-compatible.tar.gz"
+
+    result = create_backup(root, archive)
+
+    assert result.returncode == 0, result.stderr
+    assert '"legacy_jobs_without_events": 1' in result.stdout
+    assert "backup=pass" in result.stdout
+
+    restore_root = tmp_path / "restored"
+    restore = run_command(
+        sys.executable,
+        str(VALIDATOR),
+        str(archive),
+        "--restore-root",
+        str(restore_root),
+    )
+
+    assert restore.returncode == 0, restore.stderr
+    assert '"legacy_jobs_without_events": 1' in restore.stdout
+    assert not (legacy_job / "events.jsonl").exists()
+    assert not (restore_root / "books" / "jobs" / legacy_job.name / "events.jsonl").exists()
+    assert (
+        restore_root / "books" / "jobs" / modern_job.name / "events.jsonl"
+    ).read_bytes() == (modern_job / "events.jsonl").read_bytes()
+
+
+def test_validator_rejects_modern_job_without_event_history(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    job = make_job(root, "20260724-200000-modern01")
+    valid = tmp_path / "modern-valid.tar.gz"
+    assert create_backup(root, valid).returncode == 0
+
+    broken = tmp_path / "modern-missing-events.tar.gz"
+    rewrite_archive_without(
+        valid,
+        broken,
+        f"book-system-backup/books/jobs/{job.name}/events.jsonl",
+    )
+
+    result = run_command(sys.executable, str(VALIDATOR), str(broken))
+
+    assert result.returncode != 0
+    assert "Modern job is missing required event history" in result.stderr
+    assert job.name in result.stderr
+
+
+def test_validator_rejects_malformed_present_event_history(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    job = make_job(root, "20260724-200000-bad-events")
+    (job / "events.jsonl").write_text("{not-json}\n", encoding="utf-8")
+    archive = tmp_path / "bad-events.tar.gz"
+
+    result = create_backup(root, archive)
+
+    assert result.returncode != 0
+    assert "Invalid event JSON" in result.stderr
+    assert not archive.exists()
 
 
 def test_backup_refuses_active_or_locked_jobs(tmp_path: Path) -> None:

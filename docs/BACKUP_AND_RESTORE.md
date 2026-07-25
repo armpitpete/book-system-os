@@ -17,7 +17,7 @@ The backup archive contains:
 - `books/jobs/<job-id>/output/` — the job's PDF, EPUB and DOCX outputs;
 - `books/jobs/<job-id>/manifest.json` — final output and status record when present;
 - `books/jobs/<job-id>/logs/` — per-job build and error logs;
-- `books/jobs/<job-id>/events.jsonl` — lifecycle and retry history;
+- `books/jobs/<job-id>/events.jsonl` — lifecycle and retry history when the source job has it;
 - repository-level `logs/`;
 - `config/env.keys` — configuration key names only;
 - `backup-metadata.json` — backup format, timestamp and source commit.
@@ -31,6 +31,20 @@ The archive deliberately excludes:
 - any configured secret value detected in copied manuscripts, outputs or logs.
 
 Job-level `output/` directories are persistent and are included. The excluded repository-level `books/outputs/` path is not the same directory.
+
+## Legacy event-history compatibility
+
+Per-job `events.jsonl` history was introduced on 21 June 2026. Jobs created before the cutover may legitimately have no event-history file.
+
+The validator therefore applies these rules:
+
+- an existing `events.jsonl` is always preserved and validated as non-empty UTF-8 JSON Lines;
+- a missing file is accepted only when `metadata.json.created_at` is before `2026-06-21T10:33:09Z`;
+- a job at or after that cutover fails validation when its event history is missing;
+- a legacy absence is preserved as absence during restore; the procedure never fabricates historical events;
+- the validation summary reports `legacy_jobs_without_events`.
+
+This compatibility rule does not weaken modern-job validation.
 
 ## Consistency rule
 
@@ -91,7 +105,9 @@ Validation rejects:
 - members outside the fixed `book-system-backup/` prefix;
 - copied credentials, cache paths or `.lock` files;
 - missing job directories or required records;
-- malformed metadata, status, manifest or event JSON;
+- malformed metadata, status, manifest or present event JSON;
+- modern jobs without required event history;
+- legacy jobs without a trustworthy pre-cutover creation timestamp;
 - job identifiers that disagree with `metadata.json`;
 - completed jobs without a final manifest and non-empty declared outputs.
 
@@ -131,6 +147,8 @@ python3 -m json.tool "$RESTORE_ROOT/books/jobs/<job-id>/status.json" >/dev/null
 python3 -m json.tool "$RESTORE_ROOT/books/jobs/<job-id>/manifest.json" >/dev/null
 ```
 
+For jobs with event history, validate every populated line as JSON. For an accepted pre-cutover legacy job, confirm that `events.jsonl` remains absent in both the source and restored copies.
+
 Compare selected source and restored records without modifying either copy:
 
 ```bash
@@ -158,7 +176,7 @@ sha256sum \
 
 8. Start the API and worker.
 9. Check local and public health.
-10. Open representative completed jobs and confirm downloads, manifest state, logs and event history.
+10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy jobs still show no invented history.
 
 Moving restored data into a production path is a protected production-data action. It must not be automated over an existing store.
 
@@ -184,6 +202,7 @@ For each controlled rehearsal, record without credentials:
 - archive filename, size and SHA-256 digest;
 - backup and validation duration;
 - number and identifiers of representative test and production jobs;
+- count of accepted `legacy_jobs_without_events`;
 - restore destination;
 - validation output;
 - source/restored hash comparison results;

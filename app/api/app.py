@@ -10,6 +10,7 @@ from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
 from app.services.readiness import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
+from app.services.security import SecurityMiddleware
 from app.version import APP_VERSION, git_commit_label
 
 ui.APP_VERSION = APP_VERSION
@@ -24,6 +25,10 @@ ui.router.routes[:] = [
 ]
 
 app = FastAPI(title="Book System OS", version=APP_VERSION)
+# Security may inspect bounded form bodies. Add it first so the existing request
+# body limiter remains the outer middleware and rejects oversized bodies before
+# authentication, CSRF parsing or job creation.
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(submission_router)
 app.include_router(ui.router)

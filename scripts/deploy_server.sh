@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Deployment may be invoked from a root shell with a restrictive inherited
+# umask. Git checkout permissions must remain readable by the www-data service.
+umask 022
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="$ROOT_DIR/.venv/bin/python"
 LOCAL_HEALTH_URL="http://127.0.0.1:8080/health"
@@ -26,6 +30,18 @@ fi
 echo
 echo "===== GIT PULL ====="
 git pull --ff-only
+
+echo
+echo "===== NORMALISE TRACKED PERMISSIONS ====="
+"$PYTHON" "$ROOT_DIR/scripts/normalise_tracked_permissions.py" \
+  --root "$ROOT_DIR"
+
+echo
+echo "===== SERVICE SOURCE READABILITY ====="
+runuser -u www-data -- test -r "$ROOT_DIR/app/services/job_queue.py"
+runuser -u www-data -- test -r "$ROOT_DIR/app/pipeline/run_pipeline.py"
+runuser -u www-data -- test -r "$ROOT_DIR/app/utils/atomic_files.py"
+echo "service-source-readability=pass"
 
 echo
 echo "===== RECENT COMMITS ====="

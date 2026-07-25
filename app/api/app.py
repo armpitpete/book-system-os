@@ -8,6 +8,7 @@ from app.api import ui
 from app.api.auth import api_key_required
 from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
+from app.services.readiness import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
 from app.version import APP_VERSION, git_commit_label
 
@@ -46,6 +47,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ready")
+def readiness() -> JSONResponse:
+    report = readiness_report()
+    status_code = 200 if report["ready"] else 503
+    return JSONResponse(status_code=status_code, content=report)
+
+
 @app.get("/api/v1/status")
 def api_v1_status() -> dict:
     return {
@@ -57,6 +65,7 @@ def api_v1_status() -> dict:
         "write_enabled": True,
         "implemented": [
             "GET /health",
+            "GET /ready",
             "GET /api/v1/status",
             "POST /api/submit",
             "GET /api/jobs/{job_id}",

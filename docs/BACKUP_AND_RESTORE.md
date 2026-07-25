@@ -57,7 +57,23 @@ Before 19 July 2026, the successful pipeline wrote `manifest.json` before changi
 
 Commit `49fb72d1eb790c835540614cc9b8d4f022028b30` changed the ordering at `2026-07-19T18:56:19Z`, so newer completed manifests must contain an embedded final status of `done`.
 
-The validator accepts only the exact historical pre-cutover shape above. It still verifies every output, rejects state disagreement, rejects any other incomplete status snapshot and reports accepted records as `legacy_manifests_without_final_status`. Restore preserves the original manifest bytes; it does not rewrite history to resemble the current format.
+The validator accepts only the exact historical pre-cutover shape above. It still verifies every output, rejects unexplained state disagreement, rejects any other incomplete status snapshot and reports accepted records as `legacy_manifests_without_final_status`. Restore preserves the original manifest bytes; it does not rewrite history to resemble the current format.
+
+## Archived Test-state compatibility
+
+Cleanup happens after a job has completed. It may therefore change the authoritative `status.json.state` of an eligible Test job from `test` to `archived` while the immutable manifest continues to record the original Test classification.
+
+The validator accepts that mismatch only when all of the following evidence is present:
+
+- authoritative `status.json.status` is still `done`;
+- the manifest's embedded state is exactly `test`;
+- authoritative state is exactly `archived`;
+- `archived_at` and `updated_at` are valid and equal;
+- `archive_reason` exactly matches `Archived by cleanup helper; older than <positive integer> days`;
+- `events.jsonl` contains a matching `archived` event with the same reason and age threshold;
+- the matching event timestamp is no earlier than `archived_at` and no more than one minute later.
+
+This is the only accepted post-completion state mismatch. Production-to-archived transitions, missing archive events, altered reasons, inconsistent timestamps and arbitrary state changes fail validation. Restore preserves the original status, manifest and event bytes without normalising them.
 
 ## Consistency rule
 
@@ -124,7 +140,10 @@ Validation rejects:
 - job identifiers that disagree with `metadata.json`;
 - completed jobs without a manifest and non-empty declared outputs;
 - modern completed manifests without embedded final status `done`;
-- pre-cutover manifests that do not match the exact historical successful pipeline snapshot.
+- pre-cutover manifests that do not match the exact historical successful pipeline snapshot;
+- unexplained manifest/status state disagreement;
+- archived Test jobs without the exact cleanup status fields and matching archive event;
+- any production-to-archived manifest/status mismatch.
 
 ## Clean-system restore rehearsal
 
@@ -166,6 +185,8 @@ For jobs with event history, validate every populated line as JSON. For an accep
 
 For an accepted pre-cutover successful manifest, confirm that the source and restored `manifest.json` hashes are identical and that the authoritative restored `status.json` remains `done`.
 
+For an archived Test job, confirm that source and restored `status.json`, `manifest.json` and `events.jsonl` hashes are identical. The manifest should still record `test`; authoritative status should still record `archived` with its original cleanup evidence.
+
 Compare selected source and restored records without modifying either copy:
 
 ```bash
@@ -193,7 +214,7 @@ sha256sum \
 
 8. Start the API and worker.
 9. Check local and public health.
-10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy records remain unchanged rather than being fabricated or normalised.
+10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy and archived records remain unchanged rather than being fabricated or normalised.
 
 Moving restored data into a production path is a protected production-data action. It must not be automated over an existing store.
 

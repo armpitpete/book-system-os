@@ -15,7 +15,7 @@ The backup archive contains:
 - `books/jobs/<job-id>/status.json` — lifecycle and classification state;
 - `books/jobs/<job-id>/work/` — intermediate material retained for diagnosis;
 - `books/jobs/<job-id>/output/` — the job's PDF, EPUB and DOCX outputs;
-- `books/jobs/<job-id>/manifest.json` — final output and status record when present;
+- `books/jobs/<job-id>/manifest.json` — declared outputs and the status snapshot written by the pipeline version that built the job;
 - `books/jobs/<job-id>/logs/` — per-job build and error logs;
 - `books/jobs/<job-id>/events.jsonl` — lifecycle and retry history when the source job has it;
 - repository-level `logs/`;
@@ -45,6 +45,19 @@ The validator therefore applies these rules:
 - the validation summary reports `legacy_jobs_without_events`.
 
 This compatibility rule does not weaken modern-job validation.
+
+## Legacy successful-manifest compatibility
+
+Before 19 July 2026, the successful pipeline wrote `manifest.json` before changing the authoritative `status.json` record from `running` to `done`. Those completed jobs can therefore have:
+
+- authoritative `status.json` equal to `done`;
+- all declared output files present and non-empty;
+- a pre-cutover `manifest.json.completed_at`;
+- an embedded manifest status snapshot equal to `running` at `pandoc-export` with message `Building PDF/EPUB/DOCX outputs`.
+
+Commit `49fb72d1eb790c835540614cc9b8d4f022028b30` changed the ordering at `2026-07-19T18:56:19Z`, so newer completed manifests must contain an embedded final status of `done`.
+
+The validator accepts only the exact historical pre-cutover shape above. It still verifies every output, rejects state disagreement, rejects any other incomplete status snapshot and reports accepted records as `legacy_manifests_without_final_status`. Restore preserves the original manifest bytes; it does not rewrite history to resemble the current format.
 
 ## Consistency rule
 
@@ -109,7 +122,9 @@ Validation rejects:
 - modern jobs without required event history;
 - legacy jobs without a trustworthy pre-cutover creation timestamp;
 - job identifiers that disagree with `metadata.json`;
-- completed jobs without a final manifest and non-empty declared outputs.
+- completed jobs without a manifest and non-empty declared outputs;
+- modern completed manifests without embedded final status `done`;
+- pre-cutover manifests that do not match the exact historical successful pipeline snapshot.
 
 ## Clean-system restore rehearsal
 
@@ -149,6 +164,8 @@ python3 -m json.tool "$RESTORE_ROOT/books/jobs/<job-id>/manifest.json" >/dev/nul
 
 For jobs with event history, validate every populated line as JSON. For an accepted pre-cutover legacy job, confirm that `events.jsonl` remains absent in both the source and restored copies.
 
+For an accepted pre-cutover successful manifest, confirm that the source and restored `manifest.json` hashes are identical and that the authoritative restored `status.json` remains `done`.
+
 Compare selected source and restored records without modifying either copy:
 
 ```bash
@@ -176,7 +193,7 @@ sha256sum \
 
 8. Start the API and worker.
 9. Check local and public health.
-10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy jobs still show no invented history.
+10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy records remain unchanged rather than being fabricated or normalised.
 
 Moving restored data into a production path is a protected production-data action. It must not be automated over an existing store.
 
@@ -203,6 +220,7 @@ For each controlled rehearsal, record without credentials:
 - backup and validation duration;
 - number and identifiers of representative test and production jobs;
 - count of accepted `legacy_jobs_without_events`;
+- count of accepted `legacy_manifests_without_final_status`;
 - restore destination;
 - validation output;
 - source/restored hash comparison results;

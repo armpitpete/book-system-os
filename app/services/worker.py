@@ -13,6 +13,7 @@ from app.services.job_recovery import (
     refresh_job_lock,
     release_job_lock,
 )
+from app.services.readiness import WorkerServiceHeartbeat
 
 POLL_SECONDS = float(os.getenv("BOOK_WORKER_POLL_SECONDS", "2"))
 HEARTBEAT_SECONDS = max(
@@ -40,7 +41,9 @@ def _heartbeat_loop(job_dir: Path, stop: threading.Event) -> None:
             return
 
 
-def process_next_jobs() -> int:
+def process_next_jobs(
+    service_heartbeat: WorkerServiceHeartbeat | None = None,
+) -> int:
     processed = 0
     for job in queued_jobs():
         if not acquire_lock(job):
@@ -60,6 +63,9 @@ def process_next_jobs() -> int:
                 step="worker",
                 message="Worker started job",
             )
+            if service_heartbeat is not None:
+                service_heartbeat.set_state("running")
+
             heartbeat_thread = threading.Thread(
                 target=_heartbeat_loop,
                 args=(job, heartbeat_stop),
@@ -74,16 +80,25 @@ def process_next_jobs() -> int:
             if heartbeat_thread is not None:
                 heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1.0)
             release_lock(job)
+            if service_heartbeat is not None:
+                service_heartbeat.set_state("idle")
 
     return processed
 
 
 def run_forever() -> None:
-    print("Book System worker started")
-    while True:
-        processed = process_next_jobs()
-        if processed == 0:
-            time.sleep(POLL_SECONDS)
+    service_heartbeat = WorkerServiceHeartbeat()
+    service_heartbeat.start()
+    service_heartbeat.set_state("idle")
+    print("Book System worker started", flush=True)
+
+    try:
+        while True:
+            processed = process_next_jobs(service_heartbeat)
+            if processed == 0:
+                time.sleep(POLL_SECONDS)
+    finally:
+        service_heartbeat.stop()
 
 
 if __name__ == "__main__":

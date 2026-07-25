@@ -149,7 +149,7 @@ The cleanup helper is deliberately conservative.
 It should:
 
 - preview old test jobs before archiving
-- archive eligible jobs only after confirmation
+- archive eligible old test jobs only after confirmation
 - archive rather than delete folders
 - skip queued jobs
 - skip running jobs
@@ -261,6 +261,69 @@ After requeueing an abandoned job, confirm:
 
 After marking an abandoned job failed, inspect its preserved logs before using the ordinary failed-job Retry control.
 
+## Resource limits
+
+The service reads six positive configuration values from `config/env`:
+
+```text
+BOOK_MAX_REQUEST_BYTES=6291456
+BOOK_MAX_MANUSCRIPT_BYTES=5242880
+BOOK_MAX_ACTIVE_JOBS=20
+BOOK_EXPORT_COMMAND_TIMEOUT_SECONDS=300
+BOOK_MAX_JOB_BYTES=209715200
+BOOK_MAX_TOTAL_STORAGE_BYTES=10737418240
+```
+
+The defaults are intended for the current single-server deployment:
+
+- request body: 6 MiB;
+- UTF-8 Markdown manuscript: 5 MiB;
+- queued plus running jobs: 20;
+- each Pandoc command, including XeLaTeX descendants: 300 seconds;
+- one complete job directory: 200 MiB;
+- retained `books/jobs` storage: 10 GiB.
+
+A new job also reserves 64 KiB for metadata, status and event records before its directory is created. Completed jobs reserve another 64 KiB before final status and manifest publication.
+
+## Resource-limit responses
+
+Submission refusals are controlled JSON responses with a stable `code` field:
+
+- `request-too-large` — HTTP 413 before JSON or form parsing;
+- `manuscript-too-large` — HTTP 413 before job creation;
+- `queue-capacity-reached` — HTTP 503 while active capacity is full;
+- `job-storage-reservation-exceeded` — HTTP 413 when a new job cannot fit its per-job reserve;
+- `total-storage-capacity-reached` — HTTP 507 when retained storage cannot admit another job;
+- `invalid-resource-limit-config` — HTTP 503 when a configured limit is absent from the valid positive-number range.
+
+Runtime failures remain attached to the job:
+
+- `step: export-timeout` means the process group exceeded `BOOK_EXPORT_COMMAND_TIMEOUT_SECONDS` and was terminated;
+- `step: resource-limit` means per-job or total retained storage crossed its configured boundary;
+- `limit_code`, `limit` and `actual` are recorded in `status.json` for storage-limit failures;
+- `logs/error.log` and `logs/build.log` remain available for diagnosis.
+
+No limit enforcement deletes or truncates an existing job to make room.
+
+## Resource-limit operating rule
+
+Before changing a limit:
+
+1. Record the current value and reason for the change.
+2. Measure the largest accepted manuscript and completed job currently retained.
+3. Check active queue depth and total `books/jobs` use.
+4. Keep the request limit above the manuscript limit to allow JSON or form overhead.
+5. Keep the per-job limit above the manuscript limit plus output and record space.
+6. Restart both services through the protected deploy procedure.
+7. Submit one normal Test job and confirm all four formats still complete.
+
+When a limit refusal occurs:
+
+- do not edit status files or remove locks manually;
+- do not delete production jobs merely to force a submission through;
+- inspect the response code or job status before deciding whether to raise a limit, archive eligible Test jobs, or investigate abnormal output growth;
+- treat repeated export timeouts as a manuscript/toolchain fault until evidence shows the configured timeout is genuinely too low.
+
 ## Dashboard operating checks
 
 Use the dashboard to check:
@@ -307,6 +370,10 @@ Stop and investigate if:
 - recovery preview reports `uncertain` or `owned-lock`
 - an active job appears recoverable
 - a recovery command does not record operator and reason
+- a request or manuscript above its configured boundary creates a job
+- queue saturation creates an additional job
+- an export timeout leaves Pandoc or XeLaTeX descendants running
+- a resource-limit failure deletes or changes an existing production job
 - a deploy script reports API readiness failure
 
 ## Current manual gap

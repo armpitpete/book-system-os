@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api import ui
 from app.api.auth import api_key_required
 from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
+from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
 from app.version import APP_VERSION, git_commit_label
 
 ui.APP_VERSION = APP_VERSION
@@ -21,8 +23,17 @@ ui.router.routes[:] = [
 ]
 
 app = FastAPI(title="Book System OS", version=APP_VERSION)
+app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(submission_router)
 app.include_router(ui.router)
+
+
+@app.exception_handler(ResourceLimitError)
+async def resource_limit_error(
+    _request: Request,
+    exc: ResourceLimitError,
+) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.payload())
 
 
 class BookSubmitRequest(BaseModel):

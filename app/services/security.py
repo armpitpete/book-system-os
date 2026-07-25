@@ -13,10 +13,8 @@ import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from http.cookies import SimpleCookie
-from pathlib import Path
 from typing import Any, Awaitable, Callable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -46,6 +44,7 @@ _FORM_RE = re.compile(
     r"<form\b(?=[^>]*\bmethod\s*=\s*[\"']post[\"'])[^>]*>",
     flags=re.IGNORECASE,
 )
+_JOB_ACTION_RE = re.compile(r"^/jobs/([^/]+)/(retry|state)$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _FORBIDDEN_DETAIL_PARTS = {
     "password",
@@ -210,12 +209,7 @@ class BoundedWindowLimiter:
         while bucket and bucket[0] <= threshold:
             bucket.popleft()
 
-    def _bucket(
-        self,
-        key: str,
-        *,
-        max_keys: int,
-    ) -> deque[float]:
+    def _bucket(self, key: str, *, max_keys: int) -> deque[float]:
         bucket = self._buckets.get(key)
         if bucket is None:
             while len(self._buckets) >= max_keys:
@@ -282,10 +276,7 @@ def reset_security_state() -> None:
 
 
 def _header_map(scope: dict[str, Any]) -> dict[bytes, bytes]:
-    return {
-        key.lower(): value
-        for key, value in scope.get("headers", [])
-    }
+    return {key.lower(): value for key, value in scope.get("headers", [])}
 
 
 def _validated_ip(value: str) -> str | None:
@@ -372,7 +363,7 @@ def _sanitise_details(details: dict[str, Any] | None) -> dict[str, Any]:
     return clean
 
 
-def security_audit_path() -> Path:
+def security_audit_path():
     return logs_dir() / SECURITY_AUDIT_FILENAME
 
 
@@ -579,21 +570,60 @@ def _replay_receive(body: bytes) -> Callable[[], Awaitable[dict[str, Any]]]:
     return receive
 
 
-def _submitted_csrf_token(request: Request, body: bytes) -> str | None:
-    header_value = request.headers.get(CSRF_HEADER_NAME)
-    if header_value:
-        return header_value
-
+def _form_fields(request: Request, body: bytes) -> dict[str, str]:
     content_type = request.headers.get("content-type", "").lower()
     if "application/x-www-form-urlencoded" not in content_type:
-        return None
+        return {}
 
     try:
-        fields = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     except UnicodeDecodeError:
+        return {}
+    return {
+        key: values[0]
+        for key, values in parsed.items()
+        if values
+    }
+
+
+def _submitted_csrf_token(request: Request, fields: dict[str, str]) -> str | None:
+    return request.headers.get(CSRF_HEADER_NAME) or fields.get(CSRF_FORM_FIELD)
+
+
+def _dashboard_admin_event(
+    path: str,
+    fields: dict[str, str],
+) -> tuple[str, dict[str, Any]] | None:
+    if path == "/submit-form":
+        state = fields.get("state", "test").strip().lower()
+        return "admin.job.submit", {"state": state}
+
+    if path == "/jobs/cleanup-test-jobs":
+        raw_days = fields.get("older_than_days", "7")
+        try:
+            days = max(1, min(365, int(raw_days)))
+        except ValueError:
+            days = 7
+        dry_run = fields.get("confirm", "").strip().lower() != "archive"
+        return "admin.job.cleanup", {
+            "older_than_days": days,
+            "dry_run": dry_run,
+        }
+
+    match = _JOB_ACTION_RE.fullmatch(path)
+    if not match:
         return None
-    values = fields.get(CSRF_FORM_FIELD)
-    return values[0] if values else None
+
+    job_id = unquote(match.group(1))[:120]
+    action = match.group(2)
+    if action == "retry":
+        return "admin.job.retry", {"job_id": job_id}
+
+    target_state = fields.get("state", "").strip().lower()
+    return "admin.job.state", {
+        "job_id": job_id,
+        "target_state": target_state,
+    }
 
 
 def _dashboard_surface(path: str) -> bool:
@@ -601,7 +631,7 @@ def _dashboard_surface(path: str) -> bool:
 
 
 class SecurityMiddleware:
-    """Apply H-06 request rate limits and dashboard CSRF protection."""
+    """Apply H-06 request rate limits, dashboard CSRF and audit preflight."""
 
     def __init__(self, app: Callable[..., Awaitable[None]]) -> None:
         self.app = app
@@ -633,6 +663,7 @@ class SecurityMiddleware:
         path = str(scope.get("path", ""))
         method = str(scope.get("method", "GET")).upper()
         dashboard_surface = _dashboard_surface(path)
+        dashboard_mutation = dashboard_surface and method in BODY_METHODS
         cookie_value = request.cookies.get(CSRF_COOKIE_NAME)
         valid_cookie = cookie_value if _valid_csrf_token(cookie_value) else None
         csrf_value = valid_cookie or secrets.token_urlsafe(32)
@@ -684,14 +715,14 @@ class SecurityMiddleware:
                 )
 
             effective_receive = receive
-            if (
-                config.csrf_enabled
-                and dashboard_surface
-                and method in BODY_METHODS
-            ):
+            fields: dict[str, str] = {}
+            if dashboard_mutation and (config.csrf_enabled or config.audit_enabled):
                 body = await _read_body(receive)
                 effective_receive = _replay_receive(body)
-                submitted = _submitted_csrf_token(request, body)
+                fields = _form_fields(request, body)
+
+            if config.csrf_enabled and dashboard_mutation:
+                submitted = _submitted_csrf_token(request, fields)
                 reason_code = "invalid-token"
 
                 if not _same_origin(request):
@@ -738,6 +769,25 @@ class SecurityMiddleware:
                         )
                     await response(scope, effective_receive, send)
                     return
+
+            if config.audit_enabled and dashboard_mutation:
+                action = _dashboard_admin_event(path, fields)
+                if action is not None:
+                    event, details = action
+                    try:
+                        record_security_event(
+                            event,
+                            "authorised",
+                            details=details,
+                        )
+                    except (SecurityAuditError, SecurityConfigError):
+                        response = _security_json_response(
+                            status_code=503,
+                            detail="Security audit log is unavailable",
+                            code="security-audit-unavailable",
+                        )
+                        await response(scope, effective_receive, send)
+                        return
 
             async def secured_send(message: dict[str, Any]) -> None:
                 if set_cookie and message.get("type") == "http.response.start":

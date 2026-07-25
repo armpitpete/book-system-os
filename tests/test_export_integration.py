@@ -32,7 +32,14 @@ title: Stable Core Test Book
 
 This is a real Book System OS export test.
 
-## A section
+## Required formats
+
+The worker must produce:
+
+- standard PDF;
+- ND-readable PDF;
+- EPUB;
+- DOCX.
 
 The four output files must be non-empty.
 """

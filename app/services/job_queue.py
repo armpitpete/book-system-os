@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.resource_limits import check_job_admission
 from app.utils.atomic_files import atomic_write_json
 from app.utils.paths import jobs_dir
 
@@ -289,6 +290,8 @@ def read_status(job_dir: Path) -> dict[str, Any]:
 
 
 def create_job(*, title: str, markdown: str, state: str = DEFAULT_JOB_STATE) -> tuple[str, Path]:
+    check_job_admission(markdown)
+
     job_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     job_dir = jobs_dir() / job_id
     (job_dir / "input").mkdir(parents=True, exist_ok=False)

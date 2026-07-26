@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api import ui
@@ -10,10 +10,22 @@ from app.api.submission import router as submission_router
 from app.services.job_queue import create_job, get_job, read_status
 from app.services.readiness import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
+from app.services.security import SecurityMiddleware, inject_csrf_fields
 from app.version import APP_VERSION, git_commit_label
 
 ui.APP_VERSION = APP_VERSION
 ui.git_commit_label = git_commit_label
+
+# H-07 owns dashboard consolidation. Until then, keep the accepted page builder
+# authoritative and add the H-06 hidden CSRF field at its single output boundary.
+_original_ui_page = ui.page
+
+
+def _security_page(title: str, body: str) -> HTMLResponse:
+    return _original_ui_page(title, inject_csrf_fields(body))
+
+
+ui.page = _security_page
 ui.router.routes[:] = [
     route
     for route in ui.router.routes
@@ -24,6 +36,10 @@ ui.router.routes[:] = [
 ]
 
 app = FastAPI(title="Book System OS", version=APP_VERSION)
+# Security may inspect bounded form bodies. Add it first so the existing request
+# body limiter remains the outer middleware and rejects oversized bodies before
+# authentication, CSRF parsing or job creation.
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(submission_router)
 app.include_router(ui.router)

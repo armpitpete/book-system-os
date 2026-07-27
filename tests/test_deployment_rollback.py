@@ -193,9 +193,16 @@ def test_rollback_script_contains_required_protection_and_no_destructive_cleanup
         '--confirm exact-rollback',
         '[[ "$EXPECTED_CURRENT" =~ ^[0-9a-f]{40}$ ]]',
         '[[ "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]',
-        'git status --porcelain --untracked-files=no',
+        'stat -c \'%a\' "$ROOT_DIR/config/env"',
+        'stat -c \'%U:%G\' "$ROOT_DIR/config/env"',
+        'git status --porcelain --untracked-files=all',
         'git merge-base --is-ancestor "$TARGET_COMMIT" "$EXPECTED_CURRENT"',
         'git ls-files -- config/env books/jobs logs',
+        'systemctl show --property=EnvironmentFiles',
+        'systemctl show --property=ExecStart',
+        'systemctl show --property=ReadWritePaths',
+        'systemctl show --property=NoNewPrivileges',
+        'systemctl show --property=ProtectSystem',
         'systemctl stop "$API_SERVICE" "$WORKER_SERVICE"',
         'git reset --hard "$TARGET_COMMIT"',
         'sha256sum "$ROOT_DIR/config/env"',
@@ -208,12 +215,16 @@ def test_rollback_script_contains_required_protection_and_no_destructive_cleanup
         assert required in script
 
     lowered = script.lower()
-    assert "git clean" not in lowered
-    assert "rm -rf" not in lowered
-    assert "shred" not in lowered
-    assert "books/jobs/$job_id" not in lowered.split("rm", 1)[0] if "rm" in lowered else True
-    assert "cp config/env" not in lowered
-    assert "cp -r books" not in lowered
+    for forbidden in (
+        "git clean",
+        "rm -rf",
+        "shred",
+        "cp config/env",
+        "cp -r books",
+        "rsync --delete",
+    ):
+        assert forbidden not in lowered
+    assert script.count('git reset --hard "$TARGET_COMMIT"') == 1
 
 
 def test_rollback_script_has_valid_bash_syntax() -> None:

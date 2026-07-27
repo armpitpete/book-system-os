@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -9,10 +10,12 @@ from types import ModuleType
 
 import pytest
 
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 ROLLBACK_SCRIPT = REPOSITORY_ROOT / "scripts" / "rollback_server.sh"
 SNAPSHOT_SCRIPT = REPOSITORY_ROOT / "scripts" / "snapshot_job_integrity.py"
 VERIFY_SCRIPT = REPOSITORY_ROOT / "scripts" / "verify_job_downloads.py"
+VERIFY_LOGS_SCRIPT = REPOSITORY_ROOT / "scripts" / "verify_operational_logs.py"
 
 
 def load_script_module(name: str, path: Path) -> ModuleType:
@@ -75,6 +78,42 @@ def make_completed_job(root: Path, job_id: str = "20260727-120000-deadbeef") -> 
         encoding="utf-8",
     )
     return job
+
+
+def make_log_snapshot(logs_root: Path, output: Path) -> None:
+    files: dict[str, dict[str, object]] = {}
+    for path in sorted(logs_root.rglob("*")):
+        if path.is_file():
+            payload = path.read_bytes()
+            files[path.relative_to(logs_root).as_posix()] = {
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+    output.write_text(
+        json.dumps({"version": 1, "files": files}, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def write_worker_heartbeat(
+    path: Path,
+    *,
+    worker_id: str,
+    heartbeat_at: str,
+    state: str = "idle",
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "worker_id": worker_id,
+                "started_at": "2026-07-27T17:48:00+00:00",
+                "heartbeat_at": heartbeat_at,
+                "state": state,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_completed_job_snapshot_is_deterministic_and_excludes_lock(tmp_path: Path) -> None:
@@ -186,6 +225,103 @@ def test_download_verifier_refuses_non_local_credential_destination(tmp_path: Pa
         )
 
 
+def test_operational_log_verifier_allows_heartbeat_replacement_and_log_append(
+    tmp_path: Path,
+) -> None:
+    module = load_script_module("verify_operational_logs_test", VERIFY_LOGS_SCRIPT)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    build_log = logs / "worker.log"
+    heartbeat = logs / "worker-heartbeat.json"
+    build_log.write_text("before\n", encoding="utf-8")
+    write_worker_heartbeat(
+        heartbeat,
+        worker_id="worker-before",
+        heartbeat_at="2026-07-27T17:48:01+00:00",
+    )
+    snapshot = tmp_path / "logs-before.json"
+    make_log_snapshot(logs, snapshot)
+
+    build_log.write_text("before\nafter\n", encoding="utf-8")
+    write_worker_heartbeat(
+        heartbeat,
+        worker_id="worker-after",
+        heartbeat_at="2026-07-27T18:03:05+00:00",
+    )
+
+    report = module.verify_operational_logs(
+        before_path=snapshot,
+        logs_root=logs,
+    )
+
+    assert report["append_only_logs_preserved"] == 1
+    assert report["mutable_state_files_validated"] == ["worker-heartbeat.json"]
+    assert report["worker_heartbeat"]["state"] == "idle"
+    assert report["worker_heartbeat"]["worker_id_present"] is True
+
+
+def test_operational_log_verifier_refuses_replaced_append_only_log(
+    tmp_path: Path,
+) -> None:
+    module = load_script_module("verify_operational_logs_replaced_test", VERIFY_LOGS_SCRIPT)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    build_log = logs / "worker.log"
+    heartbeat = logs / "worker-heartbeat.json"
+    build_log.write_text("before\n", encoding="utf-8")
+    write_worker_heartbeat(
+        heartbeat,
+        worker_id="worker-before",
+        heartbeat_at="2026-07-27T17:48:01+00:00",
+    )
+    snapshot = tmp_path / "logs-before.json"
+    make_log_snapshot(logs, snapshot)
+
+    build_log.write_text("replacement\n", encoding="utf-8")
+    write_worker_heartbeat(
+        heartbeat,
+        worker_id="worker-after",
+        heartbeat_at="2026-07-27T18:03:05+00:00",
+    )
+
+    with pytest.raises(
+        module.OperationalLogVerificationError,
+        match="replaced or truncated",
+    ):
+        module.verify_operational_logs(
+            before_path=snapshot,
+            logs_root=logs,
+        )
+
+
+def test_operational_log_verifier_refuses_invalid_replacement_heartbeat(
+    tmp_path: Path,
+) -> None:
+    module = load_script_module("verify_operational_logs_heartbeat_test", VERIFY_LOGS_SCRIPT)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "worker.log").write_text("before\n", encoding="utf-8")
+    heartbeat = logs / "worker-heartbeat.json"
+    write_worker_heartbeat(
+        heartbeat,
+        worker_id="worker-before",
+        heartbeat_at="2026-07-27T17:48:01+00:00",
+    )
+    snapshot = tmp_path / "logs-before.json"
+    make_log_snapshot(logs, snapshot)
+
+    heartbeat.write_text('{"version": 1, "state": "idle"}', encoding="utf-8")
+
+    with pytest.raises(
+        module.OperationalLogVerificationError,
+        match="worker_id is missing",
+    ):
+        module.verify_operational_logs(
+            before_path=snapshot,
+            logs_root=logs,
+        )
+
+
 def test_rollback_script_contains_required_protection_and_no_destructive_cleanup() -> None:
     script = ROLLBACK_SCRIPT.read_text(encoding="utf-8")
 
@@ -209,11 +345,14 @@ def test_rollback_script_contains_required_protection_and_no_destructive_cleanup
         'cmp -s "$EVIDENCE_DIR/store-before.json" "$EVIDENCE_DIR/store-after-reset.json"',
         'cmp -s "$EVIDENCE_DIR/job-before.json" "$EVIDENCE_DIR/job-after.json"',
         'verify_job_downloads.py',
+        'verify_operational_logs.py',
+        'logs-after-service-recovery.json',
         'wait_url "public-readiness"',
         'rollback-result=PASS',
     ):
         assert required in script
 
+    assert "verify_logs_not_replaced" not in script
     lowered = script.lower()
     for forbidden in (
         "git clean",

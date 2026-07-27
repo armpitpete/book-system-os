@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "programme": "Book System OS v0.1 Production Hardening",
+  "governing_issue": 31,
+  "total_gates": 9,
+  "completed_count": 8,
+  "completed_gates": [
+    "H-01",
+    "H-02",
+    "H-03",
+    "H-04",
+    "H-05",
+    "H-06",
+    "H-07",
+    "H-08"
+  ],
+  "active_gate": "H-09",
+  "active_issue": 42,
+  "state": "in-progress",
+  "completion_requires": [
+    "merge exact reviewed H-09 head",
+    "deploy exact merged H-09 commit",
+    "pass controlled rollback rehearsal",
+    "separately redeploy exact H-09 commit",
+    "recheck production and completed-job downloads",
+    "create immutable annotated v0.1.8-hardened tag",
+    "close issues 42 and 31 without waiver"
+  ],
+  "excluded_work": [
+    "v0.2 implementation",
+    "print-production",
+    "Semantic Architect",
+    "multi-user accounts",
+    "database migration"
+  ]
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -7,6 +9,10 @@ from pydantic import BaseModel, Field
 from app.api.auth import api_key_required
 from app.api.ui import router as dashboard_router
 from app.services.job_queue import create_job, get_job, read_status
+from app.services.manuscript_validation import (
+    ValidationServiceError,
+    validate_manuscript,
+)
 from app.services.readiness_guard import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
 from app.services.security import SecurityMiddleware
@@ -29,9 +35,54 @@ async def resource_limit_error(
     return JSONResponse(status_code=exc.status_code, content=exc.payload())
 
 
+@app.exception_handler(ValidationServiceError)
+async def validation_service_error(
+    _request: Request,
+    exc: ValidationServiceError,
+) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.payload())
+
+
 class BookSubmitRequest(BaseModel):
     title: str = Field(default="Untitled", max_length=200)
     content: str = Field(min_length=1)
+
+
+class BookValidateRequest(BaseModel):
+    title: str = Field(default="Untitled", max_length=200)
+    content: str
+
+
+class ValidationFindingResponse(BaseModel):
+    code: str
+    severity: Literal["error", "warning"]
+    message: str
+    location: dict[str, int] | None = None
+
+
+class ValidationSummaryResponse(BaseModel):
+    request_title: str
+    source_bytes: int
+    normalised_bytes: int
+    normalisation_changed: bool
+    metadata_fields: list[str]
+    block_count: int
+    heading_count: int
+    level_one_heading_count: int
+    maximum_heading_level: int
+    image_count: int
+    table_count: int
+    footnote_count: int
+    list_count: int
+    raw_content_count: int
+
+
+class BookValidateResponse(BaseModel):
+    valid: bool
+    errors: list[ValidationFindingResponse]
+    warnings: list[ValidationFindingResponse]
+    summary: ValidationSummaryResponse
+    contract_version: Literal["0.2"]
 
 
 @app.get("/health")
@@ -59,11 +110,11 @@ def api_v1_status() -> dict:
             "GET /health",
             "GET /ready",
             "GET /api/v1/status",
+            "POST /api/v1/validate",
             "POST /api/submit",
             "GET /api/jobs/{job_id}",
         ],
         "not_yet_implemented": [
-            "POST /api/v1/validate",
             "POST /api/v1/publish/dry-run",
             "POST /api/v1/publish",
             "GET /api/v1/publish/{publish_id}",
@@ -71,6 +122,15 @@ def api_v1_status() -> dict:
             "POST /api/v1/publish/{publish_id}/retry",
         ],
     }
+
+
+@app.post(
+    "/api/v1/validate",
+    dependencies=[Depends(api_key_required)],
+    response_model=BookValidateResponse,
+)
+def api_validate(payload: BookValidateRequest) -> dict[str, object]:
+    return validate_manuscript(title=payload.title, markdown=payload.content)
 
 
 @app.post("/api/submit", dependencies=[Depends(api_key_required)])

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import api_key_required
 from app.api.ui import router as dashboard_router
 from app.services.job_queue import create_job, get_job, read_status
-from app.services.readiness import readiness_report
+from app.services.readiness_guard import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
 from app.services.security import SecurityMiddleware
 from app.version import APP_VERSION

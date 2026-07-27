@@ -10,26 +10,26 @@ It is a planning and evidence index. It does not alter the completed v0.1 determ
 | H-03 Atomic persistent writes | Accepted `v0.1.8` baseline | Shared atomic write primitive and migrated JSON writes | Fault-injection and malformed-write tests | Confirm existing production-like jobs remain readable after upgrade | Complete — #35 |
 | H-02 Interrupted-job recovery | H-03 | Heartbeat, stale classification and audited recovery action | Stale lock/running-state regression tests | Kill a controlled worker and recover its job without filesystem edits | Complete — #36 |
 | H-04 Resource limits | H-03 | Request, queue, timeout and storage limits | Limit and timeout tests | Confirm ordinary accepted manuscripts still build | Complete — #37 |
-| H-05 Readiness and observability | H-02, H-04 | Readiness endpoint, heartbeat, dependency and capacity checks | Dependency-failure readiness tests | Demonstrate stopped publishing is visible to an operator | Complete — #38 |
+| H-05 Readiness and observability | H-02, H-04 | Readiness endpoint, heartbeat, dependency and capacity checks | Dependency-failure readiness tests | Demonstrate stopped publishing is visible to an operator | Regression repair in progress — #38, #58 |
 | H-06 Web and administrative security | H-04 | CSRF, rate limiting, body limits and audit events | CSRF, abuse, limit and authentication tests | Rotate credentials and verify administrative events | Complete — #39 |
-| H-07 Dashboard consolidation | H-06 | One authoritative route and maintainable templates | Full dashboard behavioural regression suite | Confirm all dashboard operations through authenticated production-like use | Next — #40 |
+| H-07 Dashboard consolidation | H-06 | One authoritative route and maintainable templates | Full dashboard behavioural regression suite | Confirm all dashboard operations through authenticated production-like use | Merged; production acceptance blocked by #58 — #40 |
 | H-08 Manuscript regression corpus | H-04, H-07 | Valid and malformed manuscript fixtures with format checks | Four-format corpus CI | Review representative outputs for usable structure | Not started — #41 |
 | H-09 Deployment rollback | H-01 through H-08 | Exact-tag rollback procedure and rehearsal | Script/static validation where applicable | Roll back a deliberately unsuitable candidate without data loss | Not started — #42 |
 
 ## Current progress
 
 ```text
-v0.1 Production Hardening: 6/9 gates complete
+v0.1 Production Hardening: 5/9 gates complete
 ```
 
-The next bounded lane is H-07 dashboard consolidation under issue #40. H-08 and H-09 remain blocked by their declared dependencies.
+The next bounded lane is the H-05 crash-loop readiness regression repair under issue #58. H-07 production acceptance resumes only after that repair is merged, deployed and accepted. H-08 and H-09 remain blocked by their declared dependencies.
 
 ## Progress reporting
 
 Hardening progress may be reported only as completed gates out of nine, for example:
 
 ```text
-v0.1 Production Hardening: 6/9 gates complete
+v0.1 Production Hardening: 5/9 gates complete
 ```
 
 Do not present the hardening result as overall Book System OS completion.

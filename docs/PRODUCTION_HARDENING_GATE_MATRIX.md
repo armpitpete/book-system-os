@@ -4,6 +4,8 @@ This matrix is subordinate to issue #31 and `docs/PRODUCTION_HARDENING_EXECUTION
 
 It is a planning and evidence index. It does not alter the completed v0.1 deterministic-core denominator.
 
+The machine-readable companion record is `docs/PRODUCTION_HARDENING_STATUS.json`. CI must keep its completed count, completed gates, active gate and governing issue consistent with this matrix. GitHub issue and merge state remain the authority for whether a gate has actually closed.
+
 | Gate | Depends on | Primary deliverable | Automated evidence | Controlled operational evidence | Status |
 |---|---|---|---|---|---|
 | H-01 Backup and restore | Accepted `v0.1.8` baseline | Persistent-data inventory, backup and restore procedure | Backup-content validation tests | Restore production-like jobs onto a clean installation | Complete — #34 |
@@ -22,7 +24,7 @@ It is a planning and evidence index. It does not alter the completed v0.1 determ
 v0.1 Production Hardening: 8/9 gates complete
 ```
 
-The next bounded lane is H-09 deployment rollback under issue #42. The live rollback rehearsal, merge and production deployment remain protected gates.
+The next bounded lane is H-09 deployment rollback under issue #42. The live rollback rehearsal, merge, production deployment, return deployment and final immutable tag remain protected gates.
 
 ## Progress reporting
 
@@ -43,3 +45,17 @@ A gate becomes complete only when:
 3. controlled operational evidence is recorded where required;
 4. no acceptance criterion is waived;
 5. excluded v0.2, print-production or Semantic Architect work is absent.
+
+H-09 additionally requires a successful return from the temporary rollback target to the exact accepted H-09 commit before it can close. The annotated `v0.1.8-hardened` tag may be created only after that final deployment is rechecked.
+
+## Status synchronisation rule
+
+Before requesting a protected merge or declaring a gate complete, verify that all of the following agree:
+
+- the relevant GitHub issue state;
+- the implementation pull request state and exact head;
+- this matrix;
+- `docs/PRODUCTION_HARDENING_STATUS.json`;
+- the deployed production commit where operational acceptance is required.
+
+A mismatch blocks completion. Correct the status records or reconcile the branch before proceeding; do not report the most favourable source selectively.

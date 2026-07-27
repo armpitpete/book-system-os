@@ -26,6 +26,14 @@ The protected script remains responsible for its own exact-head checks, service 
 
 ## H-09 launch shape
 
+H-09 uses the committed gate-specific runner:
+
+```text
+scripts/h09_live_rehearsal.sh
+```
+
+That script performs the service-account audit, verifies the installed worker restart guard, proves stopped-worker readiness failure, restores the worker, invokes `scripts/rollback_server.sh`, and verifies the exact rollback target. It deliberately stops before any forward redeployment.
+
 Review every placeholder immediately before launch:
 
 ```bash
@@ -35,13 +43,13 @@ CURRENT="<exact merged H-09 candidate commit>"
 TARGET="1a6f8d65dc066828749b6b5e8bb25de80e92839f"
 JOB_ID="<existing completed production job>"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-EVIDENCE="/opt/book-system-rehearsals/h09-rollback-${STAMP}"
+EVIDENCE="/opt/book-system-rehearsals/h09-live-${STAMP}"
 LAUNCH_LOG="/root/book-system-h09-${STAMP}-launch.log"
 PID_FILE="/root/book-system-h09-${STAMP}.pid"
 
 cd /opt/book-system
 sudo bash scripts/run_protected_rehearsal.sh \
-  --script scripts/rollback_server.sh \
+  --script scripts/h09_live_rehearsal.sh \
   --launch-log "$LAUNCH_LOG" \
   --pid-file "$PID_FILE" \
   -- \
@@ -49,7 +57,7 @@ sudo bash scripts/run_protected_rehearsal.sh \
   --target "$TARGET" \
   --job-id "$JOB_ID" \
   --evidence-dir "$EVIDENCE" \
-  --confirm exact-rollback
+  --confirm exact-h09-rehearsal
 ```
 
 The initial command returns only after the detached runner is confirmed alive. It prints:
@@ -63,16 +71,17 @@ rehearsal-result-file=<path>.result
 
 ## Result review
 
-Inspect the PID, launch log and result sidecar:
+Inspect the PID, launch log, runner result and gate-specific result:
 
 ```bash
 PID="$(cat "$PID_FILE")"
 kill -0 "$PID" 2>/dev/null && echo running || echo finished
-tail -n 160 "$LAUNCH_LOG"
+tail -n 200 "$LAUNCH_LOG"
 cat "${LAUNCH_LOG}.result"
+cat "$EVIDENCE/result.json"
 ```
 
-A runner `PASS` means only that the protected script exited successfully. H-09 still requires review of the private rollback evidence, independent health/readiness checks, the separate return deployment and final tag procedure in `docs/DEPLOYMENT_ROLLBACK.md`.
+A runner `PASS` means only that the protected script exited successfully. H-09 still requires review of the private rollback evidence, independent health/readiness checks, the separate exact-commit return deployment and final tag procedure in `docs/DEPLOYMENT_ROLLBACK.md`.
 
 ## Failure rule
 

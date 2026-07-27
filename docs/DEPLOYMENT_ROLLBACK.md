@@ -20,6 +20,26 @@ The rollback may change tracked repository files only. It must not overwrite, re
 
 The job store and logs are ignored runtime data. `config/env` is an untracked protected secret file. The script refuses to continue if Git reports persistent runtime files as tracked, the repository has tracked modifications, the exact target is not an ancestor of the exact current commit, or installed service-unit boundaries differ from the accepted `/opt/book-system` deployment.
 
+## Rehearsal runner standard
+
+Every protected production rehearsal or acceptance script must use the same operational controls unless a stricter gate-specific control replaces one of them:
+
+- `set -Eeuo pipefail` and `umask 077`;
+- an exact reviewed commit guard before mutation;
+- an exact protected target where rollback is possible;
+- explicit `EXIT`, `HUP`, `INT` and `TERM` handling;
+- a private evidence directory with mode `0700`;
+- evidence files written with private permissions;
+- detached execution through `nohup` or an equivalent operator-controlled session;
+- a separate launch log and a stable latest-evidence pointer where practical;
+- `pipefail` whenever output is passed through `tee` so a failing command cannot appear green;
+- controlled fixtures owned by the service account that must read them;
+- no credential values, manuscript bodies or private tokens copied into evidence;
+- a required terminal `PASS` or `FAIL` result record;
+- no improvised cleanup, target selection or forward deployment after failure.
+
+The H-09 rollback utility implements the script-level controls directly. The operator must still run it detached, retain its launch log and verify its final evidence independently.
+
 ## Rollback utility
 
 Use:
@@ -102,14 +122,14 @@ A safe unsuitable-candidate simulation is:
 6. confirm `/health` still reports API liveness while `/ready` reports not ready;
 7. do not submit, retry, archive, recover or clean any job;
 8. run the exact rollback command below;
-9. review all generated evidence before declaring the rehearsal passed.
+9. review all generated evidence before declaring the rollback proof passed.
 
 Stopping the worker is a controlled simulation of an unsuitable deployment state. It does not alter application code or persistent job records. The rollback target remains an exact earlier accepted commit.
 
 Example command shape:
 
 ```bash
-set -euo pipefail
+set -Eeuo pipefail
 
 CURRENT="<exact merged H-09 candidate commit>"
 TARGET="1a6f8d65dc066828749b6b5e8bb25de80e92839f"
@@ -118,12 +138,13 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE="/opt/book-system-rehearsals/h09-rollback-${STAMP}"
 
 cd /opt/book-system
-sudo bash scripts/rollback_server.sh \
+nohup sudo bash scripts/rollback_server.sh \
   --expected-current "$CURRENT" \
   --target "$TARGET" \
   --job-id "$JOB_ID" \
   --evidence-dir "$EVIDENCE" \
-  --confirm exact-rollback
+  --confirm exact-rollback \
+  > "/root/book-system-h09-${STAMP}-launch.log" 2>&1 &
 ```
 
 The exact current commit, target and job ID must be reviewed immediately before execution. Do not paste credential values into the command or evidence record.
@@ -154,7 +175,61 @@ curl -fsS -4 https://publish.toiletrage.co.uk/health
 curl -fsS -4 https://publish.toiletrage.co.uk/ready
 ```
 
-The local branch will be behind `origin/main` after a successful rollback. That is expected evidence, not a reason to pull forward automatically. Returning to a newer release is a separate protected deployment action.
+The local branch will be behind `origin/main` after a successful rollback. That is expected evidence, not a reason to pull forward automatically.
+
+## Separate return to the current accepted release
+
+Rollback proof and release restoration are separate protected actions. H-09 is not complete while production remains on the older H-08 target.
+
+After the rollback evidence has been reviewed and accepted:
+
+1. re-verify that `origin/main` still resolves to the exact merged H-09 commit;
+2. deploy that exact H-09 merge commit through the normal protected deployment procedure;
+3. do not use a moving branch name as the deployment authority;
+4. confirm both services are active;
+5. confirm local and public health, readiness and status;
+6. recheck the same completed evidence job and every manifest-declared download;
+7. confirm `config/env`, the job-store inventory and retained outputs remain unchanged;
+8. record the final deployed commit and evidence on issues #42 and #31.
+
+A successful rollback rehearsal followed by a failed return deployment must stop with evidence. Do not close H-09 or the hardening programme in that state.
+
+## Final immutable hardening tag
+
+Only after the final H-09 commit is redeployed and accepted may the operator create the annotated release tag:
+
+```text
+v0.1.8-hardened
+```
+
+The tag must resolve to the exact final accepted H-09 commit. It must never be created on the temporarily restored H-08 commit.
+
+Before creation, check both local and remote state:
+
+```bash
+FINAL_COMMIT="<exact accepted H-09 commit>"
+TAG="v0.1.8-hardened"
+
+git -C /opt/book-system fetch --tags origin
+
+git -C /opt/book-system show-ref --verify --quiet "refs/tags/$TAG" && {
+  echo "tag already exists locally"
+  exit 1
+}
+
+git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1 && {
+  echo "tag already exists remotely"
+  exit 1
+}
+
+[[ "$(git -C /opt/book-system rev-parse HEAD)" == "$FINAL_COMMIT" ]]
+git -C /opt/book-system tag -a "$TAG" "$FINAL_COMMIT" \
+  -m "Book System OS v0.1.8 production hardening accepted"
+[[ "$(git -C /opt/book-system rev-list -n 1 "$TAG")" == "$FINAL_COMMIT" ]]
+git -C /opt/book-system push origin "refs/tags/$TAG"
+```
+
+Tag creation and push are protected actions. If the tag already exists, stop and inspect it; never move, delete or replace it as part of the rehearsal. Record the tag name and resolved commit in the completion evidence.
 
 ## Evidence files
 
@@ -169,7 +244,9 @@ The private evidence directory contains no credential values or manuscript text 
 - completed-job before/after integrity snapshots;
 - authenticated download names, sizes and SHA-256 digests;
 - local/public health, readiness and status responses;
-- final systemd state.
+- final systemd state;
+- copied rehearsal scripts and their SHA-256 digests;
+- failure stage and terminating signal when applicable.
 
 The job snapshots necessarily include relative filenames, sizes, modes and digests. They do not include file contents.
 
@@ -192,7 +269,9 @@ Stop and preserve evidence if:
 - local health or readiness fails after rollback;
 - public health or readiness fails after local recovery;
 - authenticated job detail or any output download fails;
-- the final checkout is not the exact target commit.
+- the final checkout is not the exact target commit;
+- the separate return deployment does not reach the exact H-09 commit;
+- the final tag exists already or resolves to another commit.
 
 Do not repair a failed rehearsal by deleting jobs, editing status files, changing credentials, selecting another target or pulling `main`. Record the failure and return for review.
 

@@ -36,4 +36,17 @@ jobs:
       - name: Run stable-core tests
         env:
           BOOK_SYSTEM_ENV: test
-        run: python -m pytest -q
+          H08_ARTIFACT_DIR: artifacts/h08-representative
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python -m pytest -q 2>&1 | tee artifacts/pytest.log
+
+      - name: Upload H-08 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h08-regression-evidence
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 14

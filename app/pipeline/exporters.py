@@ -19,7 +19,6 @@ class ExportTimeoutError(RuntimeError):
 def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
         return
-
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -115,6 +114,7 @@ def pandoc_export(markdown_file: Path, output_dir: Path, log_file: Path) -> dict
         "pandoc",
         str(markdown_file),
         "--from=markdown+yaml_metadata_block",
+        "--top-level-division=chapter",
         "--pdf-engine=xelatex",
         "--toc",
         "-o",
@@ -130,6 +130,7 @@ def pandoc_export(markdown_file: Path, output_dir: Path, log_file: Path) -> dict
         "pandoc",
         str(markdown_file),
         "--from=markdown+yaml_metadata_block",
+        "--top-level-division=chapter",
         "--pdf-engine=xelatex",
         "--toc",
         "-o",

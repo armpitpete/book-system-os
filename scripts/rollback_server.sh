@@ -117,10 +117,12 @@ cd "$ROOT_DIR"
 cp scripts/rollback_server.sh "$EVIDENCE_DIR/rollback_server.sh"
 cp scripts/snapshot_job_integrity.py "$EVIDENCE_DIR/snapshot_job_integrity.py"
 cp scripts/verify_job_downloads.py "$EVIDENCE_DIR/verify_job_downloads.py"
+cp scripts/verify_operational_logs.py "$EVIDENCE_DIR/verify_operational_logs.py"
 chmod 0700 \
     "$EVIDENCE_DIR/rollback_server.sh" \
     "$EVIDENCE_DIR/snapshot_job_integrity.py" \
-    "$EVIDENCE_DIR/verify_job_downloads.py"
+    "$EVIDENCE_DIR/verify_job_downloads.py" \
+    "$EVIDENCE_DIR/verify_operational_logs.py"
 
 snapshot_store() {
     local output="$1"
@@ -189,29 +191,6 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
     json.dump({"version": 1, "files": files}, handle, indent=2, sort_keys=True)
     handle.write("\n")
 print(f"operational-log-files={len(files)}")
-PY
-}
-
-verify_logs_not_replaced() {
-    "$PYTHON" - "$EVIDENCE_DIR/logs-before.json" "$ROOT_DIR/logs" <<'PY'
-from __future__ import annotations
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["files"]
-root = Path(sys.argv[2]).resolve(strict=True)
-for relative, record in before.items():
-    path = root / relative
-    if not path.is_file() or path.is_symlink():
-        raise SystemExit(f"pre-existing operational log disappeared: {relative}")
-    size = int(record["bytes"])
-    with path.open("rb") as handle:
-        prefix = handle.read(size)
-    if len(prefix) != size or hashlib.sha256(prefix).hexdigest() != record["sha256"]:
-        raise SystemExit(f"pre-existing operational log was replaced or truncated: {relative}")
-print(f"operational-logs-preserved={len(before)}")
 PY
 }
 
@@ -394,7 +373,10 @@ cmp -s "$EVIDENCE_DIR/job-before.json" "$EVIDENCE_DIR/job-after.json" || fail "c
     --output "$EVIDENCE_DIR/job-downloads.json"
 ENV_SHA_FINAL="$(sha256sum "$ROOT_DIR/config/env" | awk '{print $1}')"
 [[ "$ENV_SHA_FINAL" == "$ENV_SHA_BEFORE" ]] || fail "config/env changed after service recovery"
-verify_logs_not_replaced
+"$PYTHON" "$EVIDENCE_DIR/verify_operational_logs.py" \
+    "$EVIDENCE_DIR/logs-before.json" \
+    "$ROOT_DIR/logs" \
+    --output "$EVIDENCE_DIR/logs-after-service-recovery.json"
 
 git log -n 12 --decorate --oneline > "$EVIDENCE_DIR/git-after.txt"
 git status --short --branch > "$EVIDENCE_DIR/git-status-after.txt"

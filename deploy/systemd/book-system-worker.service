@@ -2,6 +2,9 @@
 Description=Book System OS worker
 After=network-online.target book-system-api.service
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+OnFailure=book-system-worker-failure@%n
 
 [Service]
 Type=simple

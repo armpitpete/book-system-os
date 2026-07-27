@@ -13,23 +13,23 @@ It is a planning and evidence index. It does not alter the completed v0.1 determ
 | H-05 Readiness and observability | H-02, H-04 | Readiness endpoint, heartbeat, dependency and capacity checks | Dependency-failure readiness tests | Demonstrate stopped publishing is visible to an operator | Complete — #38 |
 | H-06 Web and administrative security | H-04 | CSRF, rate limiting, body limits and audit events | CSRF, abuse, limit and authentication tests | Rotate credentials and verify administrative events | Complete — #39 |
 | H-07 Dashboard consolidation | H-06 | One authoritative route and maintainable templates | Full dashboard behavioural regression suite | Confirm all dashboard operations through authenticated production-like use | Complete — #40 |
-| H-08 Manuscript regression corpus | H-04, H-07 | Valid and malformed manuscript fixtures with format checks | Four-format corpus CI | Review representative outputs for usable structure | Next — #41 |
-| H-09 Deployment rollback | H-01 through H-08 | Exact-tag rollback procedure and rehearsal | Script/static validation where applicable | Roll back a deliberately unsuitable candidate without data loss | Not started — #42 |
+| H-08 Manuscript regression corpus | H-04, H-07 | Valid and malformed manuscript fixtures with format checks | Four-format corpus CI | Review representative outputs for usable structure | Complete — #41 |
+| H-09 Deployment rollback | H-01 through H-08 | Exact-tag rollback procedure and rehearsal | Script/static validation where applicable | Roll back a deliberately unsuitable candidate without data loss | Next — #42 |
 
 ## Current progress
 
 ```text
-v0.1 Production Hardening: 7/9 gates complete
+v0.1 Production Hardening: 8/9 gates complete
 ```
 
-The next bounded lane is H-08 manuscript regression corpus under issue #41. H-09 remains blocked by H-08.
+The next bounded lane is H-09 deployment rollback under issue #42. The live rollback rehearsal, merge and production deployment remain protected gates.
 
 ## Progress reporting
 
 Hardening progress may be reported only as completed gates out of nine, for example:
 
 ```text
-v0.1 Production Hardening: 7/9 gates complete
+v0.1 Production Hardening: 8/9 gates complete
 ```
 
 Do not present the hardening result as overall Book System OS completion.

@@ -20,7 +20,7 @@ STARTED_AT="$(date +%s)"
 usage() {
     cat <<'EOF'
 Usage:
-  sudo scripts/rollback_server.sh \
+  sudo bash scripts/rollback_server.sh \
     --expected-current <40-char commit> \
     --target <40-char earlier commit> \
     --job-id <completed job id> \
@@ -89,6 +89,8 @@ done
 [[ ! -e "$EVIDENCE_DIR" ]] || fail "evidence directory already exists"
 [[ -x "$PYTHON" ]] || fail "missing virtual-environment Python"
 [[ -f "$ROOT_DIR/config/env" ]] || fail "missing runtime environment file"
+[[ "$(stat -c '%a' "$ROOT_DIR/config/env")" == "600" ]] || fail "config/env mode is not 600"
+[[ "$(stat -c '%U:%G' "$ROOT_DIR/config/env")" == "root:root" ]] || fail "config/env owner changed"
 
 mkdir -p "$EVIDENCE_DIR"
 chmod 0700 "$EVIDENCE_DIR"
@@ -112,9 +114,13 @@ on_exit() {
 trap on_exit EXIT
 
 cd "$ROOT_DIR"
+cp scripts/rollback_server.sh "$EVIDENCE_DIR/rollback_server.sh"
 cp scripts/snapshot_job_integrity.py "$EVIDENCE_DIR/snapshot_job_integrity.py"
 cp scripts/verify_job_downloads.py "$EVIDENCE_DIR/verify_job_downloads.py"
-chmod 0700 "$EVIDENCE_DIR/snapshot_job_integrity.py" "$EVIDENCE_DIR/verify_job_downloads.py"
+chmod 0700 \
+    "$EVIDENCE_DIR/rollback_server.sh" \
+    "$EVIDENCE_DIR/snapshot_job_integrity.py" \
+    "$EVIDENCE_DIR/verify_job_downloads.py"
 
 snapshot_store() {
     local output="$1"
@@ -241,7 +247,7 @@ echo "===== REPOSITORY PRECONDITIONS ====="
 git fetch --prune origin
 CURRENT_COMMIT="$(git rev-parse HEAD)"
 [[ "$CURRENT_COMMIT" == "$EXPECTED_CURRENT" ]] || fail "deployed head changed: $CURRENT_COMMIT"
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] || fail "tracked repository changes are present"
+[[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail "repository changes or untracked application files are present"
 git cat-file -e "$TARGET_COMMIT^{commit}"
 [[ "$(git rev-parse "$TARGET_COMMIT^{commit}")" == "$TARGET_COMMIT" ]] || fail "target did not resolve exactly"
 git merge-base --is-ancestor "$TARGET_COMMIT" "$EXPECTED_CURRENT" || fail "target is not an ancestor of current commit"
@@ -264,9 +270,24 @@ for service in "$API_SERVICE" "$WORKER_SERVICE"; do
     [[ "$(systemctl show --property=User --value "$service")" == "www-data" ]] || fail "$service user changed"
     [[ "$(systemctl show --property=Group --value "$service")" == "www-data" ]] || fail "$service group changed"
     [[ "$(systemctl show --property=WorkingDirectory --value "$service")" == "$ROOT_DIR" ]] || fail "$service working directory changed"
+    [[ "$(systemctl show --property=NoNewPrivileges --value "$service")" == "yes" ]] || fail "$service no-new-privileges guard changed"
+    [[ "$(systemctl show --property=ProtectSystem --value "$service")" == "strict" ]] || fail "$service protect-system guard changed"
+
+    ENVIRONMENT_FILES="$(systemctl show --property=EnvironmentFiles --value "$service")"
+    EXEC_START="$(systemctl show --property=ExecStart --value "$service")"
+    READ_WRITE_PATHS="$(systemctl show --property=ReadWritePaths --value "$service")"
+    FRAGMENT_PATH="$(systemctl show --property=FragmentPath --value "$service")"
+
+    [[ "$ENVIRONMENT_FILES" == *"$ROOT_DIR/config/env"* ]] || fail "$service effective environment file changed"
+    [[ "$EXEC_START" == *"$ROOT_DIR/"* ]] || fail "$service effective executable path changed"
+    [[ "$READ_WRITE_PATHS" == *"$ROOT_DIR/books"* ]] || fail "$service effective books write boundary changed"
+    [[ "$READ_WRITE_PATHS" == *"$ROOT_DIR/logs"* ]] || fail "$service effective logs write boundary changed"
+    [[ -f "$FRAGMENT_PATH" ]] || fail "$service fragment path is unavailable"
+
     systemctl cat "$service" > "$EVIDENCE_DIR/${service}.unit.txt"
-    grep -Fq "EnvironmentFile=$ROOT_DIR/config/env" "$EVIDENCE_DIR/${service}.unit.txt" || fail "$service environment file changed"
-    grep -Fq "ReadWritePaths=$ROOT_DIR/books $ROOT_DIR/logs" "$EVIDENCE_DIR/${service}.unit.txt" || fail "$service writable paths changed"
+    systemctl show "$service" \
+        --property=User,Group,WorkingDirectory,EnvironmentFiles,ExecStart,ReadWritePaths,NoNewPrivileges,ProtectSystem,FragmentPath \
+        > "$EVIDENCE_DIR/${service}.effective.txt"
 done
 echo "installed-service-units=pass"
 
@@ -324,7 +345,7 @@ git reset --hard "$TARGET_COMMIT"
 [[ "$(git rev-parse HEAD)" == "$TARGET_COMMIT" ]] || fail "working tree did not reach target commit"
 "$PYTHON" "$ROOT_DIR/scripts/normalise_tracked_permissions.py" --root "$ROOT_DIR"
 "$PYTHON" -m compileall -q app scripts
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] || fail "target checkout is not clean"
+[[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail "target checkout is not clean"
 echo "tracked-checkout-target=pass"
 
 echo

@@ -89,12 +89,26 @@ def process_next_jobs(
 def run_forever() -> None:
     service_heartbeat = WorkerServiceHeartbeat()
     service_heartbeat.start()
-    service_heartbeat.set_state("idle")
-    print("Book System worker started", flush=True)
+    startup_complete = False
 
     try:
         while True:
-            processed = process_next_jobs(service_heartbeat)
+            try:
+                processed = process_next_jobs(service_heartbeat)
+            except OSError as exc:
+                service_heartbeat.set_state("starting")
+                print(
+                    f"Worker queue scan unavailable: {type(exc).__name__}",
+                    flush=True,
+                )
+                time.sleep(POLL_SECONDS)
+                continue
+
+            service_heartbeat.set_state("idle")
+            if not startup_complete:
+                print("Book System worker started", flush=True)
+                startup_complete = True
+
             if processed == 0:
                 time.sleep(POLL_SECONDS)
     finally:

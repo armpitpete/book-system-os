@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "fixtures": {
+    "representative": {
+      "path": "tests/fixtures/h08/representative.md",
+      "expected": "success",
+      "coverage": [
+        "long-chapters",
+        "unicode-and-punctuation",
+        "image",
+        "table",
+        "footnote",
+        "nested-lists",
+        "page-break",
+        "yaml-metadata",
+        "unusual-heading-structure",
+        "large-but-accepted",
+        "format-specific-raw-html"
+      ]
+    },
+    "malformed-yaml": {
+      "path": "tests/fixtures/h08/malformed-yaml.md",
+      "expected": "invalid-input"
+    },
+    "injected-exporter-failure": {
+      "path": "generated-valid-markdown",
+      "expected": "export-tool-failure"
+    }
+  }
+}

@@ -17,6 +17,7 @@ API_SERVICE="book-system-api.service"
 WORKER_SERVICE="book-system-worker.service"
 FAILURE_UNIT="book-system-worker-failure@.service"
 EXPECTED_COMMIT=""
+SERVICES_STOPPED=0
 
 usage() {
   cat <<'EOF'
@@ -24,8 +25,9 @@ Usage:
   sudo bash scripts/deploy_server.sh --expected-commit <40-char reviewed commit>
 
 The command fetches refs, verifies origin/main and the clean production checkout,
-fast-forwards only to the exact reviewed commit, audits retained-job access as
-www-data, installs the reviewed systemd units, and proves service stability.
+quiesces both services, fast-forwards only to the exact reviewed commit, audits
+retained-job access as www-data, installs reviewed systemd units, and proves
+service stability.
 EOF
 }
 
@@ -33,6 +35,22 @@ fail() {
   echo "ERROR: $*" >&2
   exit 1
 }
+
+on_exit() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  set +e
+  if [[ $status -ne 0 && $SERVICES_STOPPED -eq 1 ]]; then
+    echo "attempting-service-restart-after-deploy-failure=true" >&2
+    systemctl start "$API_SERVICE" >/dev/null 2>&1 || true
+    systemctl start "$WORKER_SERVICE" >/dev/null 2>&1 || true
+  fi
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 while (($#)); do
   case "$1" in
@@ -65,34 +83,21 @@ echo "===== BOOK SYSTEM EXACT DEPLOY ====="
 echo "root=$ROOT_DIR"
 echo "expected-commit=$EXPECTED_COMMIT"
 
- echo
+echo
 echo "===== REPOSITORY AUTHORITY ====="
 git fetch --prune origin
+[[ "$(git symbolic-ref --quiet --short HEAD)" == "main" ]] || fail "production checkout is not on main"
 [[ "$(git rev-parse origin/main)" == "$EXPECTED_COMMIT" ]] || fail "origin/main is not the exact reviewed commit"
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail "production checkout is not clean"
 CURRENT_COMMIT="$(git rev-parse HEAD)"
 if [[ "$CURRENT_COMMIT" != "$EXPECTED_COMMIT" ]]; then
   git merge-base --is-ancestor "$CURRENT_COMMIT" "$EXPECTED_COMMIT" || fail "expected commit is not a fast-forward"
-  git merge --ff-only "$EXPECTED_COMMIT"
 fi
-[[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]] || fail "deployment did not reach exact commit"
 
 echo
-echo "===== NORMALISE TRACKED PERMISSIONS ====="
-"$PYTHON" "$ROOT_DIR/scripts/normalise_tracked_permissions.py" --root "$ROOT_DIR"
-
-echo
-echo "===== SERVICE SOURCE READABILITY ====="
-for source in \
-  app/services/job_queue.py \
-  app/services/readiness.py \
-  app/services/worker.py \
-  app/pipeline/run_pipeline.py \
-  app/utils/atomic_files.py \
-  scripts/audit_job_service_access.py; do
-  runuser -u www-data -- test -r "$ROOT_DIR/$source" || fail "www-data cannot read $source"
-done
-echo "service-source-readability=pass"
+echo "===== CURRENT SERVICE STATE ====="
+systemctl is-active --quiet "$API_SERVICE" || fail "API service is not active before deployment"
+systemctl is-active --quiet "$WORKER_SERVICE" || fail "worker service is not active before deployment"
 
 echo
 echo "===== QUIESCENT JOB STORE ====="
@@ -124,6 +129,37 @@ if active or locks:
 print("active-or-locked-jobs=0")
 PY
 
+echo
+echo "===== STOP AND QUIESCE SERVICES ====="
+systemctl stop "$API_SERVICE" "$WORKER_SERVICE"
+SERVICES_STOPPED=1
+[[ "$(systemctl is-active "$API_SERVICE" || true)" == "inactive" ]] || fail "API service did not stop"
+[[ "$(systemctl is-active "$WORKER_SERVICE" || true)" == "inactive" ]] || fail "worker service did not stop"
+
+echo
+echo "===== EXACT FAST-FORWARD ====="
+if [[ "$CURRENT_COMMIT" != "$EXPECTED_COMMIT" ]]; then
+  git merge --ff-only "$EXPECTED_COMMIT"
+fi
+[[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]] || fail "deployment did not reach exact commit"
+
+echo
+echo "===== NORMALISE TRACKED PERMISSIONS ====="
+"$PYTHON" "$ROOT_DIR/scripts/normalise_tracked_permissions.py" --root "$ROOT_DIR"
+
+echo
+echo "===== SERVICE SOURCE READABILITY ====="
+for source in \
+  app/services/job_queue.py \
+  app/services/readiness.py \
+  app/services/worker.py \
+  app/pipeline/run_pipeline.py \
+  app/utils/atomic_files.py \
+  scripts/audit_job_service_access.py; do
+  runuser -u www-data -- test -r "$ROOT_DIR/$source" || fail "www-data cannot read $source"
+done
+echo "service-source-readability=pass"
+
 "$PYTHON" "$ROOT_DIR/scripts/audit_job_service_access.py" \
   --jobs-root "$ROOT_DIR/books/jobs" \
   --service-user www-data
@@ -152,10 +188,11 @@ echo "===== PYTHON COMPILE ====="
 "$PYTHON" -m compileall -q app scripts
 
 echo
-echo "===== RESTART SERVICES ====="
+echo "===== START SERVICES ====="
 systemctl reset-failed "$WORKER_SERVICE" || true
-systemctl restart "$API_SERVICE"
-systemctl restart "$WORKER_SERVICE"
+systemctl start "$API_SERVICE"
+systemctl start "$WORKER_SERVICE"
+SERVICES_STOPPED=0
 
 echo
 echo "===== SERVICE STATE ====="

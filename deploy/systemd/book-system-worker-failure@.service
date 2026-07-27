@@ -1,0 +1,10 @@
+[Unit]
+Description=Book System OS worker failure alarm for %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -p daemon.err -t book-system-worker-alarm Book System OS worker entered a failed or restart-limited state: %i
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true

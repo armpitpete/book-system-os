@@ -41,11 +41,12 @@ def _heartbeat_loop(job_dir: Path, stop: threading.Event) -> None:
             return
 
 
-def process_next_jobs(
+def process_jobs(
+    jobs: list[Path],
     service_heartbeat: WorkerServiceHeartbeat | None = None,
 ) -> int:
     processed = 0
-    for job in queued_jobs():
+    for job in jobs:
         if not acquire_lock(job):
             continue
 
@@ -86,6 +87,12 @@ def process_next_jobs(
     return processed
 
 
+def process_next_jobs(
+    service_heartbeat: WorkerServiceHeartbeat | None = None,
+) -> int:
+    return process_jobs(queued_jobs(), service_heartbeat)
+
+
 def run_forever() -> None:
     service_heartbeat = WorkerServiceHeartbeat()
     service_heartbeat.start()
@@ -94,7 +101,7 @@ def run_forever() -> None:
     try:
         while True:
             try:
-                processed = process_next_jobs(service_heartbeat)
+                jobs = queued_jobs()
             except OSError as exc:
                 service_heartbeat.set_state("starting")
                 print(
@@ -109,6 +116,7 @@ def run_forever() -> None:
                 print("Book System worker started", flush=True)
                 startup_complete = True
 
+            processed = process_jobs(jobs, service_heartbeat)
             if processed == 0:
                 time.sleep(POLL_SECONDS)
     finally:

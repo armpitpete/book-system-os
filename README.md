@@ -51,15 +51,20 @@ Completion of the v0.1 core does not mean that the planned publish gateway, prin
 - Apache reverse-proxy example
 - safe deploy script
 - unit/API tests and real four-format export test
+- authenticated side-effect-free manuscript validation
 
 ## Implemented HTTP routes
 
 - `GET /health`
+- `GET /ready`
 - `GET /api/v1/status`
+- `POST /api/v1/validate`
 - `POST /api/submit`
 - `GET /api/jobs/{job_id}`
 
 The `/api/v1/status` response also lists planned routes. Routes under `not_yet_implemented` are not live behaviour.
+
+The v0.2 validation request, response, findings and failure behaviour are documented in `docs/V0_2_VALIDATION_API.md`.
 
 ## Server target
 

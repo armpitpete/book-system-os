@@ -196,8 +196,15 @@ def test_worker_keeps_starting_state_when_initial_queue_scan_fails(
     monkeypatch.setattr(worker_module, "WorkerServiceHeartbeat", FakeHeartbeat)
     monkeypatch.setattr(
         worker_module,
-        "process_next_jobs",
-        lambda _heartbeat: (_ for _ in ()).throw(PermissionError("unreadable")),
+        "queued_jobs",
+        lambda: (_ for _ in ()).throw(PermissionError("unreadable")),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "process_jobs",
+        lambda _jobs, _heartbeat: (_ for _ in ()).throw(
+            AssertionError("processing must not start after a failed queue scan")
+        ),
     )
     monkeypatch.setattr(
         worker_module.time,
@@ -219,7 +226,8 @@ def test_worker_publishes_idle_only_after_successful_queue_scan(
 ) -> None:
     FakeHeartbeat.instances.clear()
     monkeypatch.setattr(worker_module, "WorkerServiceHeartbeat", FakeHeartbeat)
-    monkeypatch.setattr(worker_module, "process_next_jobs", lambda _heartbeat: 0)
+    monkeypatch.setattr(worker_module, "queued_jobs", lambda: [])
+    monkeypatch.setattr(worker_module, "process_jobs", lambda _jobs, _heartbeat: 0)
     monkeypatch.setattr(
         worker_module.time,
         "sleep",

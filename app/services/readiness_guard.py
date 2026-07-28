@@ -3,8 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.services.pandoc_capability import (
+    PANDOC_DOCUMENTED_MINIMUM_VERSION,
+    probe_pandoc_sandbox,
+)
 from app.services.readiness import (
     CHECK_FAIL,
+    CHECK_PASS,
     CHECK_WARNING,
     jobs_root_path,
     readiness_report as base_readiness_report,
@@ -71,6 +76,20 @@ def _apply_unreadable_job_guard(report: dict[str, Any]) -> None:
         active_work["message"] = "Unreadable retained job records were detected"
 
 
+def _apply_pandoc_sandbox_guard(report: dict[str, Any]) -> None:
+    checks = report.get("checks")
+    if not isinstance(checks, dict):
+        return
+
+    capability = probe_pandoc_sandbox()
+    checks["pandoc"] = {
+        "status": CHECK_PASS if capability.compatible else CHECK_FAIL,
+        "message": capability.message,
+        "capability_code": capability.code,
+        "documented_minimum_version": PANDOC_DOCUMENTED_MINIMUM_VERSION,
+    }
+
+
 def _recompute_overall_status(report: dict[str, Any]) -> None:
     checks = report.get("checks")
     if not isinstance(checks, dict):
@@ -94,10 +113,11 @@ def _recompute_overall_status(report: dict[str, Any]) -> None:
 
 
 def readiness_report(*, now: datetime | None = None) -> dict[str, Any]:
-    """Strengthen H-05 readiness against crash-loop false positives."""
+    """Strengthen readiness against crash-loop and toolchain false positives."""
 
     report = base_readiness_report(now=now)
     _apply_worker_startup_guard(report)
     _apply_unreadable_job_guard(report)
+    _apply_pandoc_sandbox_guard(report)
     _recompute_overall_status(report)
     return report

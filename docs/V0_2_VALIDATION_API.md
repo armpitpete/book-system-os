@@ -87,9 +87,11 @@ Initial warning codes include:
 - `language-metadata-missing`;
 - `pandoc-parser-warning`.
 
+A metadata key with an empty string, empty inline sequence, empty block sequence, empty list or empty map is treated as missing for the title and language checks. `metadata_fields` still records the declared key so callers can distinguish an absent key from an empty one.
+
 ## Controlled non-200 responses
 
-Transport, authentication, configuration and resource failures remain HTTP failures. Examples include:
+Transport, authentication, configuration, resource and validation-tool failures remain HTTP failures. Examples include:
 
 - `403` for a missing or incorrect API key;
 - `413 request-too-large`;
@@ -97,7 +99,10 @@ Transport, authentication, configuration and resource failures remain HTTP failu
 - `422` for a malformed JSON request;
 - `503 validation-tool-unavailable`;
 - `503 validation-timeout`;
+- `503 validation-tool-failed`;
 - `503 validation-tool-invalid-response`.
+
+Pandoc exit code `64` is treated as a manuscript parse error and therefore returns a completed HTTP 200 validation result with `valid: false`. Other non-zero Pandoc exits are treated as validation-tool failures and return the sanitised `503 validation-tool-failed` response. Pandoc stderr is never copied into the public response.
 
 ## Deterministic implementation
 
@@ -108,9 +113,10 @@ Validation:
 3. sends the normalised Markdown to Pandoc through standard input;
 4. uses `markdown+yaml_metadata_block` and Pandoc's JSON AST;
 5. runs Pandoc in sandbox mode with a maximum of 30 seconds and never longer than the configured export-command timeout;
-6. derives a bounded structural summary and stable findings.
+6. distinguishes manuscript parse failure from tool, option, internal and resource failures;
+7. derives a bounded structural summary and stable findings.
 
-The endpoint does not create a job directory, lock, status record, history event, output, manifest or persistent manuscript copy.
+The endpoint does not create a job directory, lock, status record, history event, output, manifest or persistent manuscript copy. The existing request-body middleware applies before authentication parsing and validation execution.
 
 ## Exclusions
 

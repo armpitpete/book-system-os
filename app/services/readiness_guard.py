@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime
 from typing import Any
 
+from app.services.pandoc_capability import (
+    PANDOC_DOCUMENTED_MINIMUM_VERSION,
+    PandocSandboxCapability,
+    probe_pandoc_sandbox,
+)
 from app.services.readiness import (
     CHECK_FAIL,
+    CHECK_PASS,
     CHECK_WARNING,
     jobs_root_path,
     readiness_report as base_readiness_report,
 )
+
+PANDOC_READINESS_CACHE_SECONDS = 60.0
+_pandoc_capability_lock = threading.Lock()
+_pandoc_capability_cached: PandocSandboxCapability | None = None
+_pandoc_capability_expires_at = 0.0
 
 
 def _unreadable_job_record_count() -> int:
@@ -71,6 +84,64 @@ def _apply_unreadable_job_guard(report: dict[str, Any]) -> None:
         active_work["message"] = "Unreadable retained job records were detected"
 
 
+def _reset_pandoc_readiness_cache() -> None:
+    """Clear process-local capability evidence for focused tests."""
+
+    global _pandoc_capability_cached, _pandoc_capability_expires_at
+    with _pandoc_capability_lock:
+        _pandoc_capability_cached = None
+        _pandoc_capability_expires_at = 0.0
+
+
+def _pandoc_capability_for_readiness() -> PandocSandboxCapability:
+    """Return bounded process-local capability evidence.
+
+    The lock is intentionally held while the probe runs. Concurrent public
+    readiness requests therefore share one in-flight Pandoc process instead of
+    launching duplicate probes.
+    """
+
+    global _pandoc_capability_cached, _pandoc_capability_expires_at
+
+    with _pandoc_capability_lock:
+        current = time.monotonic()
+        if (
+            _pandoc_capability_cached is not None
+            and current < _pandoc_capability_expires_at
+        ):
+            return _pandoc_capability_cached
+
+        try:
+            capability = probe_pandoc_sandbox()
+        except Exception:
+            capability = PandocSandboxCapability(
+                compatible=False,
+                code="pandoc-sandbox-probe-failed",
+                message="Pandoc sandbox capability probe failed",
+            )
+
+        _pandoc_capability_cached = capability
+        _pandoc_capability_expires_at = (
+            time.monotonic() + PANDOC_READINESS_CACHE_SECONDS
+        )
+        return capability
+
+
+def _apply_pandoc_sandbox_guard(report: dict[str, Any]) -> None:
+    checks = report.get("checks")
+    if not isinstance(checks, dict):
+        return
+
+    capability = _pandoc_capability_for_readiness()
+    checks["pandoc"] = {
+        "status": CHECK_PASS if capability.compatible else CHECK_FAIL,
+        "message": capability.message,
+        "capability_code": capability.code,
+        "documented_minimum_version": PANDOC_DOCUMENTED_MINIMUM_VERSION,
+        "refresh_interval_seconds": PANDOC_READINESS_CACHE_SECONDS,
+    }
+
+
 def _recompute_overall_status(report: dict[str, Any]) -> None:
     checks = report.get("checks")
     if not isinstance(checks, dict):
@@ -94,10 +165,11 @@ def _recompute_overall_status(report: dict[str, Any]) -> None:
 
 
 def readiness_report(*, now: datetime | None = None) -> dict[str, Any]:
-    """Strengthen H-05 readiness against crash-loop false positives."""
+    """Strengthen readiness against crash-loop and toolchain false positives."""
 
     report = base_readiness_report(now=now)
     _apply_worker_startup_guard(report)
     _apply_unreadable_job_guard(report)
+    _apply_pandoc_sandbox_guard(report)
     _recompute_overall_status(report)
     return report

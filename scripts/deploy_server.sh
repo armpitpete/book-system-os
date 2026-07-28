@@ -95,6 +95,14 @@ if [[ "$CURRENT_COMMIT" != "$EXPECTED_COMMIT" ]]; then
 fi
 
 echo
+echo "===== CURRENT RUNTIME COMPATIBILITY ====="
+if [[ -f "$ROOT_DIR/scripts/check_runtime_compatibility.py" ]]; then
+  "$PYTHON" "$ROOT_DIR/scripts/check_runtime_compatibility.py" --pandoc-only
+else
+  echo "current-runtime-compatibility-check=not-present-on-pre-correction-checkout"
+fi
+
+echo
 echo "===== CURRENT SERVICE STATE ====="
 systemctl is-active --quiet "$API_SERVICE" || fail "API service is not active before deployment"
 systemctl is-active --quiet "$WORKER_SERVICE" || fail "worker service is not active before deployment"
@@ -148,14 +156,27 @@ echo "===== NORMALISE TRACKED PERMISSIONS ====="
 "$PYTHON" "$ROOT_DIR/scripts/normalise_tracked_permissions.py" --root "$ROOT_DIR"
 
 echo
+echo "===== CANDIDATE RUNTIME COMPATIBILITY ====="
+"$PYTHON" "$ROOT_DIR/scripts/check_runtime_compatibility.py" \
+  --fix-git-head-readability \
+  --expected-commit "$EXPECTED_COMMIT"
+runuser -u www-data -- \
+  "$PYTHON" "$ROOT_DIR/scripts/check_runtime_compatibility.py" \
+  --expected-commit "$EXPECTED_COMMIT"
+echo "candidate-runtime-compatibility=pass"
+
+echo
 echo "===== SERVICE SOURCE READABILITY ====="
 for source in \
   app/services/job_queue.py \
+  app/services/pandoc_capability.py \
   app/services/readiness.py \
+  app/services/readiness_guard.py \
   app/services/worker.py \
   app/pipeline/run_pipeline.py \
   app/utils/atomic_files.py \
-  scripts/audit_job_service_access.py; do
+  scripts/audit_job_service_access.py \
+  scripts/check_runtime_compatibility.py; do
   runuser -u www-data -- test -r "$ROOT_DIR/$source" || fail "www-data cannot read $source"
 done
 echo "service-source-readability=pass"
@@ -279,3 +300,4 @@ echo "config-hash=$CONFIG_HASH_BEFORE"
 echo "service-account-job-audit=pass"
 echo "worker-restart-guard=pass"
 echo "worker-stability=pass"
+echo "runtime-compatibility=pass"

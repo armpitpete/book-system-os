@@ -14,8 +14,10 @@ if command -v apt-get >/dev/null 2>&1; then
   apt-get update
   apt-get install -y python3 python3-venv python3-pip pandoc texlive-xetex texlive-latex-recommended texlive-fonts-recommended
 else
-  echo "Install Python 3, Pandoc, and XeLaTeX manually."
+  echo "Install Python 3, Pandoc 2.15 or later with functional --sandbox support, and XeLaTeX manually."
 fi
+
+python3 "$BASE/scripts/check_runtime_compatibility.py" --pandoc-only
 
 python3 -m venv "$BASE/.venv"
 "$BASE/.venv/bin/pip" install --upgrade pip
@@ -28,5 +30,10 @@ fi
 
 chown -R www-data:www-data "$BASE/books" "$BASE/logs" || true
 chmod -R 750 "$BASE/books" "$BASE/logs" || true
+
+"$BASE/.venv/bin/python" "$BASE/scripts/check_runtime_compatibility.py" \
+  --fix-git-head-readability
+runuser -u www-data -- \
+  "$BASE/.venv/bin/python" "$BASE/scripts/check_runtime_compatibility.py"
 
 echo "Install complete."

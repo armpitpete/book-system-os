@@ -52,28 +52,108 @@ def _check_pandoc() -> None:
     print("pandoc-sandbox-capability=pass")
 
 
-def _metadata_files(repo_root: Path) -> list[Path]:
+def _require_directory(path: Path) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        _fail(
+            "Git metadata directory is unavailable: "
+            f"{path.name}: {type(exc).__name__}"
+        )
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        _fail(f"Git metadata directory is not a real directory: {path.name}")
+    return metadata
+
+
+def _require_regular_file(path: Path) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        _fail(
+            "Git metadata file is unavailable: "
+            f"{path.name}: {type(exc).__name__}"
+        )
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        _fail(
+            "Git metadata file is not a regular non-symlink file: "
+            f"{path.name}"
+        )
+    return metadata
+
+
+def _ref_parts(ref_name: str) -> tuple[str, ...]:
+    if ref_name.startswith("/") or "\\" in ref_name:
+        _fail("Git HEAD contains an unsafe ref path")
+    parts = tuple(ref_name.split("/"))
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        _fail("Git HEAD contains an unsafe ref path")
+    return parts
+
+
+def _metadata_paths(repo_root: Path) -> tuple[list[Path], list[Path]]:
     git_dir = repo_root / ".git"
     head = git_dir / "HEAD"
-    files = [head]
+    _require_directory(git_dir)
+    _require_regular_file(head)
 
     try:
         head_value = head.read_text(encoding="utf-8").strip()
     except OSError as exc:
         _fail(f"Git HEAD is unreadable: {type(exc).__name__}")
 
+    directories = [git_dir]
+    files = [head]
     if not head_value.startswith("ref:"):
-        return files
+        return directories, files
 
     ref_name = head_value.partition(":")[2].strip()
-    ref_path = git_dir / ref_name
-    if ref_path.exists():
+    parts = _ref_parts(ref_name)
+    current = git_dir
+    for part in parts[:-1]:
+        current = current / part
+        _require_directory(current)
+        directories.append(current)
+
+    ref_path = current / parts[-1]
+    if os.path.lexists(ref_path):
+        _require_regular_file(ref_path)
         files.append(ref_path)
     else:
         packed_refs = git_dir / "packed-refs"
-        if packed_refs.exists():
-            files.append(packed_refs)
-    return files
+        _require_regular_file(packed_refs)
+        files.append(packed_refs)
+
+    return directories, files
+
+
+def _check_path_authority(
+    path: Path,
+    *,
+    directory: bool,
+    expected_owner_uid: int,
+    expected_owner_gid: int,
+) -> None:
+    metadata = (
+        _require_directory(path)
+        if directory
+        else _require_regular_file(path)
+    )
+    if (
+        metadata.st_uid != expected_owner_uid
+        or metadata.st_gid != expected_owner_gid
+    ):
+        _fail(f"Git metadata ownership is unexpected: {path.name}")
+
+    mode = stat.S_IMODE(metadata.st_mode)
+    if mode & 0o022:
+        _fail(f"Git metadata is group/world writable: {path.name}")
+
+    required_access = os.R_OK | os.X_OK if directory else os.R_OK
+    if not os.access(path, required_access):
+        _fail(f"Git metadata is unreadable: {path.name}")
+
+    if os.geteuid() != 0 and os.access(path, os.W_OK):
+        _fail(f"Git metadata is writable by the service account: {path.name}")
 
 
 def _check_git_metadata(
@@ -81,30 +161,36 @@ def _check_git_metadata(
     *,
     fix_head_readability: bool,
     expected_commit: str,
+    expected_owner_uid: int = 0,
+    expected_owner_gid: int = 0,
 ) -> None:
     git_dir = repo_root / ".git"
     head = git_dir / "HEAD"
-    if not git_dir.is_dir() or not head.is_file():
-        _fail("Git metadata is unavailable")
+    _require_directory(git_dir)
+    head_metadata = _require_regular_file(head)
 
     if fix_head_readability:
         if os.geteuid() != 0:
             _fail("Git metadata permission correction requires root")
-        metadata = head.stat()
-        if metadata.st_uid != 0 or metadata.st_gid != 0:
+        if head_metadata.st_uid != 0 or head_metadata.st_gid != 0:
             _fail("Git HEAD ownership is not root:root")
         head.chmod(0o644)
 
-    files = _metadata_files(repo_root)
+    directories, files = _metadata_paths(repo_root)
+    for path in directories:
+        _check_path_authority(
+            path,
+            directory=True,
+            expected_owner_uid=expected_owner_uid,
+            expected_owner_gid=expected_owner_gid,
+        )
     for path in files:
-        metadata = path.stat()
-        mode = stat.S_IMODE(metadata.st_mode)
-        if mode & 0o022:
-            _fail(f"Git metadata is group/world writable: {path.name}")
-        if not os.access(path, os.R_OK):
-            _fail(f"Git metadata is unreadable: {path.name}")
-        if os.access(path, os.W_OK) and os.geteuid() != 0:
-            _fail(f"Git metadata is writable by the service account: {path.name}")
+        _check_path_authority(
+            path,
+            directory=False,
+            expected_owner_uid=expected_owner_uid,
+            expected_owner_gid=expected_owner_gid,
+        )
 
     label = git_commit_label(repo_root)
     if label == "unknown":
@@ -112,7 +198,9 @@ def _check_git_metadata(
 
     expected = expected_commit.strip().lower()
     if expected:
-        if len(expected) != 40 or any(char not in "0123456789abcdef" for char in expected):
+        if len(expected) != 40 or any(
+            character not in "0123456789abcdef" for character in expected
+        ):
             _fail("Expected commit must be a full lowercase SHA-1")
         if label != expected[:7]:
             _fail("The deployed Git commit label does not match the expected commit")

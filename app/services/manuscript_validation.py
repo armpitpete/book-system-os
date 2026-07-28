@@ -13,6 +13,7 @@ from app.services.resource_limits import (
 
 CONTRACT_VERSION = "0.2"
 MAX_VALIDATION_SECONDS = 30.0
+PANDOC_PARSE_ERROR_EXIT = 64
 
 
 class ValidationServiceError(RuntimeError):
@@ -69,6 +70,42 @@ def _raw_format(node: dict[str, Any]) -> str | None:
         return None
     value = content[0]
     return value if isinstance(value, str) else None
+
+
+def _metadata_value_present(value: object) -> bool:
+    """Return whether a Pandoc metadata value contains meaningful content."""
+
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, list):
+        return any(_metadata_value_present(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+
+    node_type = value.get("t")
+    content = value.get("c")
+    if node_type == "MetaString":
+        return isinstance(content, str) and bool(content.strip())
+    if node_type == "MetaBool":
+        return isinstance(content, bool)
+    if node_type in {"MetaInlines", "MetaBlocks", "MetaList"}:
+        return _metadata_value_present(content)
+    if node_type == "MetaMap":
+        return isinstance(content, dict) and any(
+            _metadata_value_present(item) for item in content.values()
+        )
+
+    return any(
+        _metadata_value_present(child)
+        for key, child in value.items()
+        if key != "t"
+    )
 
 
 def _analyse_document(
@@ -147,7 +184,10 @@ def _analyse_document(
             )
         )
 
-    if "title" not in metadata and request_title.strip() in {"", "Untitled"}:
+    if not _metadata_value_present(metadata.get("title")) and request_title.strip() in {
+        "",
+        "Untitled",
+    }:
         warnings.append(
             _finding(
                 "title-metadata-missing",
@@ -156,7 +196,7 @@ def _analyse_document(
             )
         )
 
-    if "lang" not in metadata:
+    if not _metadata_value_present(metadata.get("lang")):
         warnings.append(
             _finding(
                 "language-metadata-missing",
@@ -219,8 +259,13 @@ def _parse_with_pandoc(markdown: str) -> tuple[dict[str, Any] | None, bool]:
             code="validation-tool-unavailable",
         ) from exc
 
-    if completed.returncode != 0:
+    if completed.returncode == PANDOC_PARSE_ERROR_EXIT:
         return None, False
+    if completed.returncode != 0:
+        raise ValidationServiceError(
+            "Pandoc could not complete manuscript validation",
+            code="validation-tool-failed",
+        )
 
     try:
         document = json.loads(completed.stdout)

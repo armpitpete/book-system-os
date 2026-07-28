@@ -3,13 +3,18 @@ from __future__ import annotations
 import argparse
 import os
 import stat
+import sys
 from pathlib import Path
 
-from app.services.pandoc_capability import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from app.services.pandoc_capability import (  # noqa: E402
     PANDOC_DOCUMENTED_MINIMUM_VERSION,
     probe_pandoc_sandbox,
 )
-from app.version import git_commit_label
+from app.version import git_commit_label  # noqa: E402
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -123,9 +128,8 @@ def main() -> None:
     if args.pandoc_only:
         return
 
-    repo_root = Path(__file__).resolve().parents[1]
     _check_git_metadata(
-        repo_root,
+        REPO_ROOT,
         fix_head_readability=args.fix_git_head_readability,
         expected_commit=args.expected_commit,
     )

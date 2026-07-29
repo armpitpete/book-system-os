@@ -5,16 +5,20 @@ PANDOC_VERSION="3.9.0.2"
 PANDOC_AMD64_SHA256="a69abfababda8a56969a254b09f9553a7be89ddec00d4e0fe9fd585d71a67508"
 PANDOC_ARM64_SHA256="b6d21e8f9c3b15744f5a7ab40248019157ed7793875dbe0383d4c82ff572b528"
 RUNTIME_ROOT=""
+COMMAND_LINK=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/install_pinned_pandoc.sh --runtime-root /absolute/path
+  bash scripts/install_pinned_pandoc.sh \
+    --runtime-root /absolute/path \
+    [--command-link /absolute/path/to/pandoc]
 
 Downloads the reviewed official Pandoc release for the current Linux
 architecture, verifies the pinned SHA-256 digest, proves functional sandbox
 support, installs it into a versioned directory, and atomically updates the
-current symlink.
+current runtime symlink. An optional command link exposes that exact runtime to
+ordinary guarded deployment shells without replacing a non-symlink file.
 EOF
 }
 
@@ -36,6 +40,10 @@ while (($#)); do
       RUNTIME_ROOT="${2:-}"
       shift 2
       ;;
+    --command-link)
+      COMMAND_LINK="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -49,6 +57,10 @@ done
 
 [[ "$RUNTIME_ROOT" == /* ]] || fail "runtime root must be an absolute path"
 [[ "$RUNTIME_ROOT" != "/" ]] || fail "runtime root must not be /"
+if [[ -n "$COMMAND_LINK" ]]; then
+  [[ "$COMMAND_LINK" == /* && "$COMMAND_LINK" != "/" ]] \
+    || fail "command link must be a bounded absolute path"
+fi
 
 for command_name in curl sha256sum tar python3 readlink; do
   command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
@@ -137,6 +149,20 @@ mv -Tf "$TEMP_LINK" "$CURRENT_LINK"
   || fail "current Pandoc symlink did not resolve to the pinned version"
 [[ -x "$CURRENT_LINK/bin/pandoc" ]] || fail "activated Pandoc binary is not executable"
 
+if [[ -n "$COMMAND_LINK" ]]; then
+  COMMAND_PARENT="$(dirname "$COMMAND_LINK")"
+  mkdir -p "$COMMAND_PARENT"
+  chmod 0755 "$COMMAND_PARENT"
+  if [[ -e "$COMMAND_LINK" && ! -L "$COMMAND_LINK" ]]; then
+    fail "refusing to replace non-symlink command path: $COMMAND_LINK"
+  fi
+  TEMP_COMMAND_LINK="$COMMAND_PARENT/.pandoc.book-system.$$"
+  ln -s "$CURRENT_LINK/bin/pandoc" "$TEMP_COMMAND_LINK"
+  mv -Tf "$TEMP_COMMAND_LINK" "$COMMAND_LINK"
+  [[ "$(readlink -f "$COMMAND_LINK")" == "$(readlink -f "$CURRENT_LINK/bin/pandoc")" ]] \
+    || fail "command link did not resolve to the pinned runtime"
+fi
+
 printf '# Book System OS activated sandbox probe\n' \
   | "$CURRENT_LINK/bin/pandoc" \
       --sandbox \
@@ -148,4 +174,7 @@ echo "pandoc-version=$PANDOC_VERSION"
 echo "pandoc-asset=$ASSET_NAME"
 echo "pandoc-asset-sha256=$EXPECTED_SHA256"
 echo "pandoc-runtime=$CURRENT_LINK/bin/pandoc"
+if [[ -n "$COMMAND_LINK" ]]; then
+  echo "pandoc-command-link=$COMMAND_LINK"
+fi
 echo "pandoc-installation=pass"

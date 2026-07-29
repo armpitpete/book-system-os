@@ -4,6 +4,8 @@ set -Eeuo pipefail
 PANDOC_VERSION="3.9.0.2"
 PANDOC_AMD64_SHA256="a69abfababda8a56969a254b09f9553a7be89ddec00d4e0fe9fd585d71a67508"
 PANDOC_ARM64_SHA256="b6d21e8f9c3b15744f5a7ab40248019157ed7793875dbe0383d4c82ff572b528"
+PRODUCTION_RUNTIME_ROOT="/opt/book-system-runtime/pandoc"
+PRODUCTION_COMMAND_LINK="/usr/local/bin/pandoc"
 RUNTIME_ROOT=""
 COMMAND_LINK=""
 
@@ -19,6 +21,9 @@ architecture, verifies the pinned SHA-256 digest, proves functional sandbox
 support, installs it into a versioned directory, and atomically updates the
 current runtime symlink. An optional command link exposes that exact runtime to
 ordinary guarded deployment shells without replacing a non-symlink file.
+
+When root installs into /opt/book-system-runtime/pandoc, the reviewed production
+command link /usr/local/bin/pandoc is selected automatically.
 EOF
 }
 
@@ -57,6 +62,9 @@ done
 
 [[ "$RUNTIME_ROOT" == /* ]] || fail "runtime root must be an absolute path"
 [[ "$RUNTIME_ROOT" != "/" ]] || fail "runtime root must not be /"
+if [[ -z "$COMMAND_LINK" && "$(id -u)" -eq 0 && "$RUNTIME_ROOT" == "$PRODUCTION_RUNTIME_ROOT" ]]; then
+  COMMAND_LINK="$PRODUCTION_COMMAND_LINK"
+fi
 if [[ -n "$COMMAND_LINK" ]]; then
   [[ "$COMMAND_LINK" == /* && "$COMMAND_LINK" != "/" ]] \
     || fail "command link must be a bounded absolute path"

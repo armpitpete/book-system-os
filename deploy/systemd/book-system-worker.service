@@ -5,13 +5,13 @@ Wants=network-online.target
 StartLimitIntervalSec=300
 StartLimitBurst=3
 OnFailure=book-system-worker-failure@%n
-
 [Service]
 Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/book-system
 EnvironmentFile=/opt/book-system/config/env
+Environment=PATH=/opt/book-system-runtime/pandoc/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/opt/book-system/.venv/bin/python -m app.services.worker
 Restart=on-failure
 RestartSec=3

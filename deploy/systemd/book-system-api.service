@@ -9,6 +9,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/book-system
 EnvironmentFile=/opt/book-system/config/env
+Environment=PATH=/opt/book-system-runtime/pandoc/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/opt/book-system/.venv/bin/uvicorn app.api.app:app --host ${BOOK_BIND_HOST} --port ${BOOK_BIND_PORT}
 Restart=on-failure
 RestartSec=3

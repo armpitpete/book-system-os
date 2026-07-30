@@ -62,6 +62,21 @@ chmod 0700 "$LAUNCHER"
 
 This is one launcher invocation. The launcher performs and logs the internal mechanical steps. Merrin must not be asked to relay each command separately.
 
+The launcher stages the exact accepted candidate tree into a root-only temporary
+directory before the production checkout moves. Every script or Python module
+used before the guarded fast-forward comes from that staged candidate tree,
+including:
+
+- `scripts/install_pinned_pandoc.sh`;
+- `scripts/check_runtime_compatibility.py`; and
+- `scripts/deploy_server.sh`.
+
+The candidate deployment script is then executed from the staged tree with an
+explicit `--repo-root /opt/book-system` target. This keeps script authority in
+the reviewed candidate while all repository mutation remains bounded to the
+production checkout. The temporary candidate tree is removed by the launcher
+cleanup trap when the operation exits.
+
 ## Exact Pandoc authority
 
 The reviewed release is:
@@ -118,7 +133,8 @@ The launcher must then:
 3. verify the exact release and functional `--sandbox` behaviour;
 4. install or reuse the matching versioned runtime without overwriting differing content;
 5. prove sandbox capability as `root` and `www-data`;
-6. run the existing exact guarded deployment;
+6. run the exact guarded deployment script from the staged candidate tree while
+   explicitly targeting `/opt/book-system`;
 7. verify both services use the pinned runtime path;
 8. prove public health, readiness and route status;
 9. prove missing and incorrect API keys return HTTP `403`;

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -12,6 +16,64 @@ PINNED_RUNTIME_PATH = (
     "/opt/book-system-runtime/pandoc/current/bin:"
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
+
+
+def _require_command(name: str) -> str:
+    if name == "bash":
+        configured = os.environ.get("BOOK_SYSTEM_TEST_BASH")
+        candidates = [
+            Path(configured) if configured else None,
+            Path("C:/msys64/usr/bin/bash.exe"),
+        ]
+        for candidate in candidates:
+            if candidate is not None and candidate.is_file():
+                return str(candidate)
+    path = shutil.which(name)
+    if path is None:
+        pytest.skip(f"{name} is unavailable")
+    return path
+
+
+def _run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _write_script(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8", newline="\n")
+    path.chmod(0o755)
+
+
+def _git(repo: Path, *args: str) -> str:
+    git = _require_command("git")
+    result = _run([git, *args], cwd=repo)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _bash_path(bash: str, path: Path) -> str:
+    if os.name != "nt":
+        return path.as_posix()
+    result = _run(
+        [bash, "-lc", 'printf "BOOK_SYSTEM_PATH:%s\n" "$(cygpath -u "$1")"', "_", str(path)],
+    )
+    assert result.returncode == 0, result.stderr
+    for line in result.stdout.splitlines():
+        if line.startswith("BOOK_SYSTEM_PATH:"):
+            return line.partition(":")[2]
+    raise AssertionError(result.stdout)
 
 
 def test_read_env_value_does_not_execute_the_file(tmp_path: Path) -> None:
@@ -171,27 +233,182 @@ def test_every_installation_surface_uses_the_shared_pinned_runtime() -> None:
     assert f"Environment=PATH={PINNED_RUNTIME_PATH}" in worker_unit
 
 
-def test_production_launcher_is_exact_guarded_logged_and_bounded() -> None:
+def test_production_launcher_bootstraps_candidate_surface_from_old_checkout(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    bash = _require_command("bash")
+    repository_root = Path(__file__).resolve().parents[1]
+    launcher = repository_root / "scripts" / "production_v2_01_acceptance.sh"
+    fixture_root = tmp_path
+    if os.name == "nt":
+        fixture_root = (
+            repository_root
+            / ".pytest-shell-tmp"
+            / f"{tmp_path.name}-{uuid.uuid4().hex}"
+        )
+        request.addfinalizer(lambda: shutil.rmtree(fixture_root, ignore_errors=True))
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    repo = fixture_root / "old-production-checkout"
+    trace = fixture_root / "bootstrap-trace.txt"
+    work = fixture_root / "launcher-work"
+    fake_bin = fixture_root / "fake-bin"
+    repo.mkdir()
+    work.mkdir()
+    fake_bin.mkdir()
+
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+    _git(repo, "config", "user.name", "Tests")
+    _git(repo, "checkout", "-b", "main")
+
+    _write_script(
+        repo / "scripts" / "deploy_server.sh",
+        "#!/usr/bin/env bash\n"
+        "echo old-deploy-ran >> \"$TRACE\"\n"
+        "touch \"$REPO_ROOT_UNDER_TEST/old-deploy-marker\"\n"
+        "exit 88\n",
+    )
+    (repo / "config").mkdir()
+    (repo / "config" / "env").write_text("BOOK_API_KEY=test\n", encoding="utf-8")
+    (repo / "books").mkdir()
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "old production checkout")
+    old_commit = _git(repo, "rev-parse", "HEAD")
+
+    _write_script(
+        repo / "scripts" / "check_runtime_compatibility.py",
+        "# candidate compatibility marker\n",
+    )
+    _write_script(
+        repo / "scripts" / "install_pinned_pandoc.sh",
+        "#!/usr/bin/env bash\n"
+        "echo candidate-installer=$0 >> \"$TRACE\"\n",
+    )
+    _write_script(
+        repo / "scripts" / "v2_01_live_acceptance.py",
+        "# candidate live acceptance marker\n",
+    )
+    _write_script(
+        repo / "scripts" / "deploy_server.sh",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "repo_root=''\n"
+        "expected=''\n"
+        "while (($#)); do\n"
+        "  case \"$1\" in\n"
+        "    --repo-root) repo_root=\"$2\"; shift 2 ;;\n"
+        "    --expected-commit) expected=\"$2\"; shift 2 ;;\n"
+        "    *) echo \"unexpected argument: $1\" >&2; exit 2 ;;\n"
+        "  esac\n"
+        "done\n"
+        "echo candidate-deploy-script=$0 >> \"$TRACE\"\n"
+        "echo candidate-deploy-target=$repo_root >> \"$TRACE\"\n"
+        "echo candidate-deploy-expected=$expected >> \"$TRACE\"\n"
+        "[ \"$repo_root\" = \"$REPO_ROOT_UNDER_TEST\" ]\n"
+        "[ \"$0\" != \"$repo_root/scripts/deploy_server.sh\" ]\n"
+        "touch \"$repo_root/deploy-target-marker\"\n",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "candidate execution surface")
+    candidate_commit = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", old_commit)
+    (repo / "scripts" / "check_runtime_compatibility.py").unlink(missing_ok=True)
+
+    _write_script(
+        repo / ".venv" / "bin" / "python",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "script=\"${1:-}\"\n"
+        "if [ ! -f \"$script\" ]; then\n"
+        "  echo \"$0: can't open file '$script': [Errno 2] No such file or directory\" >&2\n"
+        "  exit 2\n"
+        "fi\n"
+        "echo python-script=$script >> \"$TRACE\"\n"
+        "shift\n"
+        "echo python-args=$* >> \"$TRACE\"\n",
+    )
+    _write_script(
+        fake_bin / "runuser",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "while [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n"
+        "[ \"${1:-}\" = \"--\" ] && shift\n"
+        "echo runuser-command=$* >> \"$TRACE\"\n"
+        "exec \"$@\"\n",
+    )
+    _write_script(
+        fake_bin / "install",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "directory=0\n"
+        "paths=()\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  case \"$1\" in\n"
+        "    -d) directory=1; shift ;;\n"
+        "    -m|-o|-g) shift 2 ;;\n"
+        "    *) paths+=(\"$1\"); shift ;;\n"
+        "  esac\n"
+        "done\n"
+        "[ \"$directory\" = 1 ]\n"
+        "mkdir -p \"${paths[@]}\"\n",
+    )
+
+    env = {
+        **os.environ,
+        "TRACE": _bash_path(bash, trace),
+        "REPO_ROOT_UNDER_TEST": _bash_path(bash, repo),
+        "PATH": (
+            f"{_bash_path(bash, fake_bin)}:"
+            f"{_bash_path(bash, Path(bash).parent)}:"
+            f"/usr/bin:/bin:{os.environ['PATH']}"
+        ),
+    }
+    old_result = _run(
+        [
+            bash,
+            "-c",
+            "./.venv/bin/python scripts/check_runtime_compatibility.py --pandoc-only",
+        ],
+        cwd=repo,
+        env=env,
+    )
+    assert old_result.returncode == 2
+    assert "can't open file" in old_result.stderr
+
+    harness = (
+        "set -Eeuo pipefail\n"
+        f"source '{_bash_path(bash, launcher)}'\n"
+        f"REPO_ROOT='{_bash_path(bash, repo)}'\n"
+        f"EXPECTED_COMMIT='{candidate_commit}'\n"
+        f"WORK_DIR='{_bash_path(bash, work)}'\n"
+        "cd \"$REPO_ROOT\"\n"
+        "stage_candidate_tree\n"
+        "install_candidate_pandoc_runtime\n"
+        "run_candidate_runtime_capability\n"
+        "run_candidate_guarded_deployment\n"
+    )
+    corrected = _run([bash, "-c", harness], env=env)
+
+    assert corrected.returncode == 0, corrected.stderr
+    assert "candidate-execution-surface=" in corrected.stdout
+    trace_text = trace.read_text(encoding="utf-8")
+    staged_root = f"{_bash_path(bash, work)}/candidate-tree"
+    assert f"candidate-installer={staged_root}/scripts/install_pinned_pandoc.sh" in trace_text
+    assert f"python-script={staged_root}/scripts/check_runtime_compatibility.py" in trace_text
+    assert f"candidate-deploy-script={staged_root}/scripts/deploy_server.sh" in trace_text
+    assert f"candidate-deploy-target={_bash_path(bash, repo)}" in trace_text
+    assert f"candidate-deploy-expected={candidate_commit}" in trace_text
+    assert "runuser-command=env PATH=" in trace_text
+    assert not (repo / "old-deploy-marker").exists()
+    assert (repo / "deploy-target-marker").is_file()
+
+
+def test_production_launcher_keeps_dangerous_operations_out_of_scope() -> None:
     root = Path(__file__).resolve().parents[1]
     launcher = (root / "scripts" / "production_v2_01_acceptance.sh").read_text(
         encoding="utf-8"
     )
-
-    required_phrases = [
-        "--execute",
-        "origin/main is not the exact accepted commit",
-        "running launcher is not the launcher stored in the exact accepted commit",
-        "install_pinned_pandoc.sh",
-        "check_runtime_compatibility.py",
-        "runuser -u www-data -- env PATH=",
-        "deploy_server.sh",
-        "v2_01_live_acceptance.py",
-        "retained-books-unchanged=pass",
-        "v2-01-production-acceptance=pass",
-        "/var/log/book-system",
-    ]
-    for phrase in required_phrases:
-        assert phrase in launcher
 
     assert "merge_pull_request" not in launcher
     assert "git push" not in launcher

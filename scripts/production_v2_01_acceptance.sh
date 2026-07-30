@@ -11,6 +11,7 @@ REPO_ROOT="$DEFAULT_REPO_ROOT"
 EXECUTE=0
 WORK_DIR=""
 CANDIDATE_TREE=""
+CANDIDATE_PARENT_ROOT="/run"
 
 usage() {
   cat <<'EOF'
@@ -41,6 +42,16 @@ fail() {
 }
 
 cleanup() {
+  if [[ -n "$CANDIDATE_TREE" && -d "$CANDIDATE_TREE" ]]; then
+    case "$(basename "$CANDIDATE_TREE")" in
+      book-system-candidate-tree.*)
+        rm -rf -- "$CANDIDATE_TREE"
+        ;;
+      *)
+        echo "refusing-to-clean-unexpected-candidate-tree=$CANDIDATE_TREE" >&2
+        ;;
+    esac
+  fi
   if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
     rm -rf -- "$WORK_DIR"
   fi
@@ -110,8 +121,11 @@ PY
 }
 
 stage_candidate_tree() {
-  CANDIDATE_TREE="$WORK_DIR/candidate-tree"
-  install -d -m 0700 "$CANDIDATE_TREE"
+  if [[ -z "$CANDIDATE_TREE" ]]; then
+    CANDIDATE_TREE="$(mktemp -d -p "$CANDIDATE_PARENT_ROOT" book-system-candidate-tree.XXXXXXXXXX)"
+  else
+    install -d -m 0700 "$CANDIDATE_TREE"
+  fi
   git archive "$EXPECTED_COMMIT" | tar -x -C "$CANDIDATE_TREE"
   for required in \
     scripts/install_pinned_pandoc.sh \
@@ -123,6 +137,49 @@ stage_candidate_tree() {
   done
   echo "candidate-execution-surface=$CANDIDATE_TREE"
   echo "candidate-execution-commit=$EXPECTED_COMMIT"
+}
+
+make_candidate_execution_surface_service_readable() {
+  [[ -n "$CANDIDATE_TREE" && -d "$CANDIDATE_TREE" ]] \
+    || fail "candidate execution surface has not been staged"
+  chown -hR root:www-data "$CANDIDATE_TREE"
+  find "$CANDIDATE_TREE" -type d -exec chmod 0750 {} +
+  find "$CANDIDATE_TREE" -type f -exec chmod 0640 {} +
+  find "$CANDIDATE_TREE" -type f -perm /111 -exec chmod 0750 {} +
+  echo "candidate-execution-surface-owner=root:www-data"
+  echo "candidate-execution-surface-mode=service-readable-nonwritable"
+}
+
+verify_candidate_execution_surface_service_boundary() {
+  local compatibility_script
+  local parent_path
+  local writable_path
+
+  compatibility_script="$(candidate_file scripts/check_runtime_compatibility.py)"
+
+  runuser -u www-data -- test -x "$CANDIDATE_TREE" \
+    || fail "www-data cannot traverse the staged candidate execution surface"
+  runuser -u www-data -- test -r "$compatibility_script" \
+    || fail "www-data cannot read the staged candidate compatibility script"
+  runuser -u www-data -- test -r "$CANDIDATE_TREE/app/services/pandoc_capability.py" \
+    || fail "www-data cannot read staged candidate application code"
+
+  if ! writable_path="$(runuser -u www-data -- find "$CANDIDATE_TREE" -writable -print -quit)"; then
+    fail "www-data cannot inspect staged candidate writability"
+  fi
+  [[ -z "$writable_path" ]] \
+    || fail "www-data can write the staged candidate execution surface: $writable_path"
+
+  parent_path="$CANDIDATE_TREE"
+  while true; do
+    runuser -u www-data -- test ! -w "$parent_path" \
+      || fail "www-data can write candidate parent path: $parent_path"
+    [[ "$parent_path" == "/" ]] && break
+    parent_path="$(dirname "$parent_path")"
+  done
+
+  echo "candidate-execution-surface-www-data-readability=pass"
+  echo "candidate-execution-surface-www-data-nonwritable=pass"
 }
 
 candidate_file() {
@@ -197,9 +254,10 @@ main() {
   [[ "$REPO_ROOT" == /* && "$REPO_ROOT" != "/" ]] || fail "repo root must be a bounded absolute path"
   [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "expected commit must be a full lowercase SHA-1"
 
-  for command_name in git sha256sum flock systemctl runuser python3 tar install; do
+  for command_name in git sha256sum flock systemctl runuser python3 tar install mktemp chown chmod find; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing required command: $command_name"
   done
+  id -u www-data >/dev/null 2>&1 || fail "missing service account: www-data"
 
   [[ -d "$REPO_ROOT/.git" ]] || fail "repository is unavailable at $REPO_ROOT"
   cd "$REPO_ROOT"
@@ -240,11 +298,14 @@ main() {
   BEFORE_MANIFEST="$WORK_DIR/books-before.json"
   AFTER_MANIFEST="$WORK_DIR/books-after.json"
   write_books_manifest "$BEFORE_MANIFEST"
+  chmod 0600 "$BEFORE_MANIFEST"
   echo "retained-books-before-sha256=$(sha256sum "$BEFORE_MANIFEST" | awk '{print $1}')"
 
   echo
   echo "===== CANDIDATE EXECUTION SURFACE ====="
   stage_candidate_tree
+  make_candidate_execution_surface_service_readable
+  verify_candidate_execution_surface_service_boundary
 
   echo
   echo "===== PINNED PANDOC INSTALLATION ====="
@@ -282,6 +343,7 @@ main() {
       --expected-commit "$EXPECTED_COMMIT"
 
   write_books_manifest "$AFTER_MANIFEST"
+  chmod 0600 "$AFTER_MANIFEST"
   cmp --silent "$BEFORE_MANIFEST" "$AFTER_MANIFEST" \
     || fail "deployment or acceptance changed retained book storage"
   echo "retained-books-after-sha256=$(sha256sum "$AFTER_MANIFEST" | awk '{print $1}')"

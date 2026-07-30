@@ -382,6 +382,7 @@ def test_production_launcher_bootstraps_candidate_surface_from_old_checkout(
         f"REPO_ROOT='{_bash_path(bash, repo)}'\n"
         f"EXPECTED_COMMIT='{candidate_commit}'\n"
         f"WORK_DIR='{_bash_path(bash, work)}'\n"
+        f"CANDIDATE_TREE='{_bash_path(bash, work)}/candidate-tree'\n"
         "cd \"$REPO_ROOT\"\n"
         "stage_candidate_tree\n"
         "install_candidate_pandoc_runtime\n"
@@ -402,6 +403,78 @@ def test_production_launcher_bootstraps_candidate_surface_from_old_checkout(
     assert "runuser-command=env PATH=" in trace_text
     assert not (repo / "old-deploy-marker").exists()
     assert (repo / "deploy-target-marker").is_file()
+
+
+def test_candidate_surface_is_readable_but_not_writable_by_real_www_data() -> None:
+    if os.name != "posix":
+        pytest.skip("real www-data service-account proof requires POSIX")
+    for command in ("sudo", "bash", "runuser", "id"):
+        _require_command(command)
+    if _run(["id", "-u", "www-data"]).returncode != 0:
+        pytest.skip("www-data user is unavailable")
+    if _run(["sudo", "-n", "true"]).returncode != 0:
+        pytest.skip("passwordless sudo is required for root-owned service-account proof")
+
+    root = Path(__file__).resolve().parents[1]
+    launcher = root / "scripts" / "production_v2_01_acceptance.sh"
+    harness = f"""
+set -Eeuo pipefail
+source '{launcher.as_posix()}'
+TEST_ROOT="$(mktemp -d -p /run book-system-v2b-service-proof.XXXXXXXXXX)"
+trap 'rm -rf -- "$TEST_ROOT"' EXIT
+chown root:www-data "$TEST_ROOT"
+chmod 0750 "$TEST_ROOT"
+REPO_ROOT="$TEST_ROOT/repo"
+CANDIDATE_TREE="$TEST_ROOT/book-system-candidate-tree.fixture"
+mkdir -p "$REPO_ROOT/.venv/bin" "$CANDIDATE_TREE/scripts" "$CANDIDATE_TREE/app/services"
+cat > "$REPO_ROOT/.venv/bin/python" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+script="$1"
+shift
+exec python3 "$script" "$@"
+SH
+chmod 0755 "$REPO_ROOT/.venv/bin/python"
+cat > "$CANDIDATE_TREE/scripts/check_runtime_compatibility.py" <<'PY'
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+candidate_root = Path(__file__).resolve().parents[1]
+print(f"candidate-compatibility-euid={{os.geteuid()}}")
+print(f"candidate-compatibility-args={{' '.join(sys.argv[1:])}}")
+if os.geteuid() != 0:
+    try:
+        (candidate_root / "www-data-write-probe").write_text("unsafe", encoding="utf-8")
+    except OSError:
+        print("candidate-tree-write=blocked")
+    else:
+        raise SystemExit("candidate tree was writable by www-data")
+PY
+cat > "$CANDIDATE_TREE/app/services/pandoc_capability.py" <<'PY'
+# candidate application module readability marker
+PY
+make_candidate_execution_surface_service_readable
+verify_candidate_execution_surface_service_boundary
+run_candidate_runtime_capability
+if runuser -u www-data -- sh -c 'printf unsafe > "$1"/direct-write-probe' _ "$CANDIDATE_TREE"; then
+  echo "direct-write=unexpected-success"
+  exit 7
+fi
+echo "direct-write=blocked"
+"""
+    result = _run(["sudo", "-n", "bash", "-c", harness])
+
+    assert result.returncode == 0, result.stderr
+    assert "candidate-execution-surface-www-data-readability=pass" in result.stdout
+    assert "candidate-execution-surface-www-data-nonwritable=pass" in result.stdout
+    assert "candidate-compatibility-euid=0" in result.stdout
+    assert "candidate-tree-write=blocked" in result.stdout
+    assert "direct-write=blocked" in result.stdout
+    www_data_uid = _run(["id", "-u", "www-data"]).stdout.strip()
+    assert f"candidate-compatibility-euid={www_data_uid}" in result.stdout
 
 
 def test_production_launcher_keeps_dangerous_operations_out_of_scope() -> None:

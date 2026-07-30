@@ -20,10 +20,13 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Install export toolchain
+      - name: Install exact export toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y pandoc texlive-xetex texlive-latex-recommended texlive-fonts-recommended
+          sudo apt-get install -y curl ca-certificates texlive-xetex texlive-latex-recommended texlive-fonts-recommended
+          bash scripts/install_pinned_pandoc.sh --runtime-root "$RUNNER_TEMP/book-system-pandoc"
+          echo "$RUNNER_TEMP/book-system-pandoc/current/bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/book-system-pandoc/current/bin:$PATH"
           command -v pandoc
           command -v xelatex
           python scripts/check_runtime_compatibility.py --pandoc-only
@@ -33,6 +36,11 @@ jobs:
 
       - name: Compile Python files
         run: python -m compileall app scripts tests
+
+      - name: Check shell syntax
+        run: |
+          find scripts -maxdepth 1 -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
 
       - name: Run stable-core tests
         env:

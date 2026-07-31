@@ -5,8 +5,8 @@ set -Eeuo pipefail
 # umask. Tracked application files must remain readable by www-data.
 umask 022
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="$ROOT_DIR/.venv/bin/python"
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$SCRIPT_ROOT"
 LOCAL_HEALTH_URL="http://127.0.0.1:8080/health"
 LOCAL_READY_URL="http://127.0.0.1:8080/ready"
 LOCAL_STATUS_URL="http://127.0.0.1:8080/api/v1/status"
@@ -22,12 +22,18 @@ SERVICES_STOPPED=0
 usage() {
   cat <<'EOF'
 Usage:
-  sudo bash scripts/deploy_server.sh --expected-commit <40-char reviewed commit>
+  sudo bash scripts/deploy_server.sh \
+    [--repo-root /opt/book-system] \
+    --expected-commit <40-char reviewed commit>
 
 The command fetches refs, verifies origin/main and the clean production checkout,
 quiesces both services, fast-forwards only to the exact reviewed commit, audits
 retained-job access as www-data, installs reviewed systemd units, and proves
 service stability.
+
+When the script is executed from a candidate staging directory, --repo-root
+keeps script authority in the reviewed candidate while all repository mutation
+targets the bounded production checkout.
 EOF
 }
 
@@ -54,6 +60,10 @@ trap 'exit 143' TERM
 
 while (($#)); do
   case "$1" in
+    --repo-root)
+      ROOT_DIR="${2:-}"
+      shift 2
+      ;;
     --expected-commit)
       EXPECTED_COMMIT="${2:-}"
       shift 2
@@ -70,7 +80,10 @@ while (($#)); do
 done
 
 [[ "$(id -u)" -eq 0 ]] || fail "run as root"
+[[ "$ROOT_DIR" == /* && "$ROOT_DIR" != "/" ]] || fail "repo root must be a bounded absolute path"
 [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "expected commit must be a full SHA-1"
+[[ -d "$ROOT_DIR/.git" ]] || fail "repository is unavailable at $ROOT_DIR"
+PYTHON="$ROOT_DIR/.venv/bin/python"
 [[ -f "$ROOT_DIR/config/env" ]] || fail "missing $ROOT_DIR/config/env"
 [[ -x "$PYTHON" ]] || fail "missing virtual-environment Python at $PYTHON"
 [[ "$(stat -c '%a' "$ROOT_DIR/config/env")" == "600" ]] || fail "config/env mode is not 600"
@@ -96,8 +109,9 @@ fi
 
 echo
 echo "===== CURRENT RUNTIME COMPATIBILITY ====="
-if [[ -f "$ROOT_DIR/scripts/check_runtime_compatibility.py" ]]; then
-  "$PYTHON" "$ROOT_DIR/scripts/check_runtime_compatibility.py" --pandoc-only
+CURRENT_COMPATIBILITY_SCRIPT="$SCRIPT_ROOT/scripts/check_runtime_compatibility.py"
+if [[ -f "$CURRENT_COMPATIBILITY_SCRIPT" ]]; then
+  "$PYTHON" "$CURRENT_COMPATIBILITY_SCRIPT" --pandoc-only
 else
   echo "current-runtime-compatibility-check=not-present-on-pre-correction-checkout"
 fi

@@ -5,6 +5,7 @@ import signal
 import subprocess
 from pathlib import Path
 
+from app.services.publish_plan import PUBLISH_OUTPUTS, PublishOutputSpec
 from app.services.resource_limits import (
     enforce_job_storage_limits,
     export_command_timeout_seconds,
@@ -101,74 +102,42 @@ def _run_export_command(
     enforce_job_storage_limits(job_dir)
 
 
+def _pandoc_command(
+    markdown_file: Path,
+    output: PublishOutputSpec,
+) -> list[str]:
+    cmd = [
+        "pandoc",
+        str(markdown_file),
+        "--from=markdown+yaml_metadata_block",
+        "--toc",
+        "-o",
+        output.filename,
+    ]
+    if output.key in {"pdf_standard", "pdf_nd"}:
+        cmd.insert(3, "--top-level-division=chapter")
+        cmd.insert(4, "--pdf-engine=xelatex")
+
+        template_name = {
+            "pdf_standard": "book-template-standard.tex",
+            "pdf_nd": "book-template-nd.tex",
+        }[output.key]
+        template = templates_dir() / template_name
+        if template.exists():
+            cmd.insert(2, f"--template={template}")
+    return cmd
+
+
 def pandoc_export(markdown_file: Path, output_dir: Path, log_file: Path) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, str] = {}
     job_dir = output_dir.parent
 
-    standard_template = templates_dir() / "book-template-standard.tex"
-    nd_template = templates_dir() / "book-template-nd.tex"
-
-    pdf_standard = output_dir / "book-standard.pdf"
-    cmd = [
-        "pandoc",
-        str(markdown_file),
-        "--from=markdown+yaml_metadata_block",
-        "--top-level-division=chapter",
-        "--pdf-engine=xelatex",
-        "--toc",
-        "-o",
-        str(pdf_standard),
-    ]
-    if standard_template.exists():
-        cmd.insert(2, f"--template={standard_template}")
-    _run_export_command(cmd, job_dir=job_dir, log_file=log_file)
-    outputs["pdf_standard"] = pdf_standard.name
-
-    pdf_nd = output_dir / "book-nd.pdf"
-    cmd = [
-        "pandoc",
-        str(markdown_file),
-        "--from=markdown+yaml_metadata_block",
-        "--top-level-division=chapter",
-        "--pdf-engine=xelatex",
-        "--toc",
-        "-o",
-        str(pdf_nd),
-    ]
-    if nd_template.exists():
-        cmd.insert(2, f"--template={nd_template}")
-    _run_export_command(cmd, job_dir=job_dir, log_file=log_file)
-    outputs["pdf_nd"] = pdf_nd.name
-
-    epub = output_dir / "book.epub"
-    _run_export_command(
-        [
-            "pandoc",
-            str(markdown_file),
-            "--from=markdown+yaml_metadata_block",
-            "--toc",
-            "-o",
-            str(epub),
-        ],
-        job_dir=job_dir,
-        log_file=log_file,
-    )
-    outputs["epub"] = epub.name
-
-    docx = output_dir / "book.docx"
-    _run_export_command(
-        [
-            "pandoc",
-            str(markdown_file),
-            "--from=markdown+yaml_metadata_block",
-            "--toc",
-            "-o",
-            str(docx),
-        ],
-        job_dir=job_dir,
-        log_file=log_file,
-    )
-    outputs["docx"] = docx.name
+    for output in PUBLISH_OUTPUTS:
+        output_path = output_dir / output.filename
+        cmd = _pandoc_command(markdown_file, output)
+        cmd[-1] = str(output_path)
+        _run_export_command(cmd, job_dir=job_dir, log_file=log_file)
+        outputs[output.key] = output_path.name
 
     return outputs

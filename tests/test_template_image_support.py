@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.pipeline import exporters
+from app.services.publish_plan import PUBLISH_OUTPUTS
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +59,7 @@ def test_pdf_exports_use_book_chapters(
         tmp_path / "build.log",
     )
 
-    assert set(outputs) == {"pdf_standard", "pdf_nd", "epub", "docx"}
+    assert set(outputs) == {output.key for output in PUBLISH_OUTPUTS}
     assert len(commands) == 4
     for command in commands[:2]:
         assert "--top-level-division=chapter" in command

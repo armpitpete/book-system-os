@@ -127,6 +127,10 @@ This endpoint does not:
 - implement Semantic Architect behaviour;
 - submit a publishing job;
 - create PDF, EPUB or DOCX output;
-- implement `/api/v1/publish*`;
+- implement executable `/api/v1/publish*` job routes;
 - add print-production, cover, spine, bleed, colour or imposition behaviour;
 - authorise production deployment.
+
+The publish dry-run route is documented separately in
+`docs/V0_2_PUBLISH_DRY_RUN_API.md` and reuses this validation service without
+creating jobs or rendering outputs.

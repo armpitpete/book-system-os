@@ -52,6 +52,7 @@ Completion of the v0.1 core does not mean that the planned publish gateway, prin
 - safe deploy script
 - unit/API tests and real four-format export test
 - authenticated side-effect-free manuscript validation
+- authenticated side-effect-free publish dry-run planning
 
 ## Implemented HTTP routes
 
@@ -59,12 +60,14 @@ Completion of the v0.1 core does not mean that the planned publish gateway, prin
 - `GET /ready`
 - `GET /api/v1/status`
 - `POST /api/v1/validate`
+- `POST /api/v1/publish/dry-run`
 - `POST /api/submit`
 - `GET /api/jobs/{job_id}`
 
 The `/api/v1/status` response also lists planned routes. Routes under `not_yet_implemented` are not live behaviour.
 
 The v0.2 validation request, response, findings and failure behaviour are documented in `docs/V0_2_VALIDATION_API.md`.
+The v0.2 publish dry-run route and side-effect boundary are documented in `docs/V0_2_PUBLISH_DRY_RUN_API.md`.
 
 ## Server target
 

@@ -80,6 +80,36 @@ def expected_manifest_outputs() -> dict[str, str]:
     return {output.key: output.filename for output in PUBLISH_OUTPUTS}
 
 
+def install_forbidden_side_effect_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    forbid_validation: bool = False,
+) -> list[str]:
+    blocked_calls: list[str] = []
+
+    def block_call(name: str):
+        def _blocked(*_args: object, **_kwargs: object) -> None:
+            blocked_calls.append(name)
+            raise AssertionError(f"dry-run must not call {name}")
+
+        return _blocked
+
+    if forbid_validation:
+        monkeypatch.setattr(
+            api_module,
+            "build_publish_dry_run",
+            block_call("validation"),
+        )
+    monkeypatch.setattr(api_module, "create_job", block_call("create_job"))
+    monkeypatch.setattr(exporters, "_run_export_command", block_call("export"))
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", block_call("temporary-file"))
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", block_call("temporary-dir"))
+    monkeypatch.setattr(tempfile, "mkstemp", block_call("temporary-file"))
+    monkeypatch.setattr(worker, "process_jobs", block_call("process_jobs"))
+    monkeypatch.setattr(worker, "process_next_jobs", block_call("process_next_jobs"))
+    return blocked_calls
+
+
 def test_publish_dry_run_returns_authoritative_plan_without_retained_writes(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -117,6 +147,70 @@ def test_publish_dry_run_returns_authoritative_plan_without_retained_writes(
     assert payload["job_created"] is False
     assert payload["contract_version"] == "0.2"
     assert job_directories(tmp_path) == []
+    assert persistent_files(tmp_path) == files_before
+    assert persistent_directories(tmp_path) == directories_before
+
+
+@pytest.mark.parametrize(
+    "request_kwargs",
+    [
+        {"json": {"title": "Missing content"}},
+        {"json": {"title": "Typed content", "content": {"not": "a string"}}},
+        {
+            "content": b'{"title":"Broken","content":',
+            "headers": {"content-type": "application/json"},
+        },
+    ],
+)
+def test_publish_dry_run_malformed_requests_are_422_without_side_effects(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request_kwargs: dict[str, object],
+) -> None:
+    blocked_calls = install_forbidden_side_effect_blocks(
+        monkeypatch,
+        forbid_validation=True,
+    )
+    files_before = persistent_files(tmp_path)
+    directories_before = persistent_directories(tmp_path)
+
+    response = client.post("/api/v1/publish/dry-run", **request_kwargs)
+
+    assert response.status_code == 422
+    assert blocked_calls == []
+    assert job_directories(tmp_path) == []
+    assert persistent_files(tmp_path) == files_before
+    assert persistent_directories(tmp_path) == directories_before
+    assert not (tmp_path / "books" / "jobs").exists()
+
+
+def test_publish_dry_run_identical_requests_are_deterministic_without_retained_state(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    install_successful_parser(monkeypatch)
+    blocked_calls = install_forbidden_side_effect_blocks(monkeypatch)
+    request = {
+        "title": "Deterministic",
+        "content": "---\ntitle: Deterministic\nlang: en-GB\n---\n\n# Opening\n\nSame.\n",
+    }
+    files_before = persistent_files(tmp_path)
+    directories_before = persistent_directories(tmp_path)
+
+    first = client.post("/api/v1/publish/dry-run", json=request)
+    files_after_first = persistent_files(tmp_path)
+    directories_after_first = persistent_directories(tmp_path)
+    second = client.post("/api/v1/publish/dry-run", json=request)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+    assert blocked_calls == []
+    assert job_directories(tmp_path) == []
+    assert files_after_first == files_before
+    assert directories_after_first == directories_before
     assert persistent_files(tmp_path) == files_before
     assert persistent_directories(tmp_path) == directories_before
 
@@ -261,22 +355,7 @@ def test_publish_dry_run_does_not_create_jobs_run_workers_or_export(
     tmp_path: Path,
 ) -> None:
     install_successful_parser(monkeypatch)
-    blocked_calls: list[str] = []
-
-    def block_call(name: str):
-        def _blocked(*_args: object, **_kwargs: object) -> None:
-            blocked_calls.append(name)
-            raise AssertionError(f"dry-run must not call {name}")
-
-        return _blocked
-
-    monkeypatch.setattr(api_module, "create_job", block_call("create_job"))
-    monkeypatch.setattr(exporters, "_run_export_command", block_call("export"))
-    monkeypatch.setattr(tempfile, "NamedTemporaryFile", block_call("temporary-file"))
-    monkeypatch.setattr(tempfile, "TemporaryDirectory", block_call("temporary-dir"))
-    monkeypatch.setattr(tempfile, "mkstemp", block_call("temporary-file"))
-    monkeypatch.setattr(worker, "process_jobs", block_call("process_jobs"))
-    monkeypatch.setattr(worker, "process_next_jobs", block_call("process_next_jobs"))
+    blocked_calls = install_forbidden_side_effect_blocks(monkeypatch)
 
     response = client.post(
         "/api/v1/publish/dry-run",

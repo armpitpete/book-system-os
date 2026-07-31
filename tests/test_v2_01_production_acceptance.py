@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -76,6 +77,52 @@ def _bash_path(bash: str, path: Path) -> str:
     raise AssertionError(result.stdout)
 
 
+def _skip_without_posix_modes() -> None:
+    if os.name != "posix":
+        pytest.skip("retained job mode-boundary proof requires POSIX chmod")
+
+
+def _retained_jobs_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    jobs = repo / "books" / "jobs"
+    jobs.mkdir(parents=True)
+    (jobs / ".gitkeep").write_text("", encoding="utf-8")
+
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+    _git(repo, "config", "user.name", "Tests")
+    _git(repo, "checkout", "-b", "main")
+    _git(repo, "add", "books/jobs/.gitkeep")
+    _git(repo, "commit", "-m", "tracked retained jobs scaffold")
+
+    job = jobs / "job-1"
+    job.mkdir()
+    (job / "status.json").write_text('{"status":"done"}\n', encoding="utf-8")
+    (job / "logs.jsonl").write_text('{"event":"complete"}\n', encoding="utf-8")
+    jobs.chmod(0o700)
+    (jobs / ".gitkeep").chmod(0o600)
+    job.chmod(0o750)
+    (job / "status.json").chmod(0o640)
+    (job / "logs.jsonl").chmod(0o640)
+    return repo
+
+
+def _source_launcher_script(
+    bash: str,
+    repo: Path,
+    body: str,
+) -> subprocess.CompletedProcess[str]:
+    launcher = Path(__file__).resolve().parents[1] / "scripts" / "production_v2_01_acceptance.sh"
+    script = (
+        "set -Eeuo pipefail\n"
+        f"source '{_bash_path(bash, launcher)}'\n"
+        f"REPO_ROOT='{_bash_path(bash, repo)}'\n"
+        f"cd \"$REPO_ROOT\"\n"
+        f"{body}\n"
+    )
+    return _run([bash, "-c", script])
+
+
 def test_read_env_value_does_not_execute_the_file(tmp_path: Path) -> None:
     env_file = tmp_path / "env"
     marker = tmp_path / "must-not-exist"
@@ -118,6 +165,224 @@ def test_storage_manifest_detects_content_and_structure_changes(tmp_path: Path) 
     (job / ".lock").write_text("locked\n", encoding="utf-8")
     after_structure_change = acceptance.storage_manifest(books)
     assert after_structure_change != before
+
+
+def test_outer_manifest_ignores_only_reviewed_scaffold_permission_normalisation(
+    tmp_path: Path,
+) -> None:
+    _skip_without_posix_modes()
+    bash = _require_command("bash")
+    repo = _retained_jobs_repo(tmp_path)
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+
+    result = _source_launcher_script(
+        bash,
+        repo,
+        (
+            f"write_retained_jobs_manifest '{_bash_path(bash, before)}'\n"
+            "chmod 0755 \"$REPO_ROOT/books/jobs\"\n"
+            "chmod 0644 \"$REPO_ROOT/books/jobs/.gitkeep\"\n"
+            f"write_retained_jobs_manifest '{_bash_path(bash, after)}'\n"
+            f"compare_retained_jobs_manifests '{_bash_path(bash, before)}' '{_bash_path(bash, after)}'\n"
+            "echo retained-scaffold-normalisation=ignored\n"
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "retained-scaffold-normalisation=ignored" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("name", "mutation", "expected_bucket"),
+    [
+        (
+            "modify-file",
+            "printf '{\"status\":\"failed\"}\\n' > \"$REPO_ROOT/books/jobs/job-1/status.json\"",
+            "changed",
+        ),
+        (
+            "add-file",
+            "printf 'runtime' > \"$REPO_ROOT/books/jobs/job-1/new-runtime-file.txt\"",
+            "added",
+        ),
+        (
+            "delete-file",
+            "rm \"$REPO_ROOT/books/jobs/job-1/status.json\"",
+            "removed",
+        ),
+        (
+            "chmod-file",
+            "chmod 0600 \"$REPO_ROOT/books/jobs/job-1/status.json\"",
+            "changed",
+        ),
+        (
+            "chmod-directory",
+            "chmod 0700 \"$REPO_ROOT/books/jobs/job-1\"",
+            "changed",
+        ),
+        (
+            "replace-file-with-symlink",
+            "rm \"$REPO_ROOT/books/jobs/job-1/status.json\" && ln -s target \"$REPO_ROOT/books/jobs/job-1/status.json\"",
+            "changed",
+        ),
+    ],
+)
+def test_outer_manifest_detects_real_retained_job_mutations(
+    tmp_path: Path,
+    name: str,
+    mutation: str,
+    expected_bucket: str,
+) -> None:
+    _skip_without_posix_modes()
+    bash = _require_command("bash")
+    repo = _retained_jobs_repo(tmp_path / name)
+    before = tmp_path / f"{name}-before.json"
+    after = tmp_path / f"{name}-after.json"
+
+    result = _source_launcher_script(
+        bash,
+        repo,
+        (
+            f"write_retained_jobs_manifest '{_bash_path(bash, before)}'\n"
+            f"{mutation}\n"
+            f"write_retained_jobs_manifest '{_bash_path(bash, after)}'\n"
+            f"compare_retained_jobs_manifests '{_bash_path(bash, before)}' '{_bash_path(bash, after)}'\n"
+        ),
+    )
+
+    assert result.returncode == 1
+    prefix = "retained-jobs-mismatch="
+    diagnostic_line = next(
+        line for line in result.stdout.splitlines() if line.startswith(prefix)
+    )
+    diagnostic = json.loads(diagnostic_line.removeprefix(prefix))
+    assert diagnostic["status"] == "mismatch"
+    assert diagnostic[f"{expected_bucket}_count"] >= 1
+
+
+def test_outer_manifest_fails_closed_for_additional_tracked_jobs_path(
+    tmp_path: Path,
+) -> None:
+    _skip_without_posix_modes()
+    bash = _require_command("bash")
+    repo = _retained_jobs_repo(tmp_path)
+    tracked = repo / "books" / "jobs" / "tracked-runtime.txt"
+    tracked.write_text("must not be tracked\n", encoding="utf-8")
+    _git(repo, "add", "books/jobs/tracked-runtime.txt")
+    _git(repo, "commit", "-m", "unexpected tracked runtime path")
+
+    result = _source_launcher_script(
+        bash,
+        repo,
+        f"write_retained_jobs_manifest '{_bash_path(bash, tmp_path / 'manifest.json')}'\n",
+    )
+
+    assert result.returncode != 0
+    assert "unexpected tracked path under books/jobs: books/jobs/tracked-runtime.txt" in result.stderr
+
+
+def test_outer_manifest_mismatch_diagnostics_are_bounded(
+    tmp_path: Path,
+) -> None:
+    _skip_without_posix_modes()
+    bash = _require_command("bash")
+    repo = _retained_jobs_repo(tmp_path)
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+
+    result = _source_launcher_script(
+        bash,
+        repo,
+        (
+            f"write_retained_jobs_manifest '{_bash_path(bash, before)}'\n"
+            "for index in $(seq 1 30); do\n"
+            "  printf 'secret manuscript content %s\\n' \"$index\" > \"$REPO_ROOT/books/jobs/job-1/added-$index.txt\"\n"
+            "done\n"
+            f"write_retained_jobs_manifest '{_bash_path(bash, after)}'\n"
+            f"compare_retained_jobs_manifests '{_bash_path(bash, before)}' '{_bash_path(bash, after)}'\n"
+        ),
+    )
+
+    assert result.returncode == 1
+    assert "secret manuscript content" not in result.stdout
+    prefix = "retained-jobs-mismatch="
+    diagnostic_line = next(
+        line for line in result.stdout.splitlines() if line.startswith(prefix)
+    )
+    diagnostic = json.loads(diagnostic_line.removeprefix(prefix))
+    assert diagnostic["added_count"] == 30
+    assert len(diagnostic["added"]) == 25
+    assert diagnostic["truncated"] is True
+
+
+def test_corrected_outer_manifest_is_safe_when_already_at_expected_commit(
+    tmp_path: Path,
+) -> None:
+    _skip_without_posix_modes()
+    bash = _require_command("bash")
+    repo = tmp_path / "repo"
+    jobs = repo / "books" / "jobs"
+    jobs.mkdir(parents=True)
+    (jobs / ".gitkeep").write_text("", encoding="utf-8")
+    _write_script(
+        repo / "scripts" / "deploy_server.sh",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "repo_root=''\n"
+        "expected=''\n"
+        "while (($#)); do\n"
+        "  case \"$1\" in\n"
+        "    --repo-root) repo_root=\"$2\"; shift 2 ;;\n"
+        "    --expected-commit) expected=\"$2\"; shift 2 ;;\n"
+        "    *) exit 2 ;;\n"
+        "  esac\n"
+        "done\n"
+        "[ \"$(git -C \"$repo_root\" rev-parse HEAD)\" = \"$expected\" ]\n"
+        "chmod 0755 \"$repo_root/books/jobs\"\n"
+        "chmod 0644 \"$repo_root/books/jobs/.gitkeep\"\n"
+        "echo already-at-expected-deploy=pass\n",
+    )
+    _write_script(repo / "scripts" / "install_pinned_pandoc.sh", "#!/usr/bin/env bash\n")
+    _write_script(repo / "scripts" / "check_runtime_compatibility.py", "# marker\n")
+    _write_script(repo / "scripts" / "v2_01_live_acceptance.py", "# marker\n")
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "tests@example.invalid")
+    _git(repo, "config", "user.name", "Tests")
+    _git(repo, "checkout", "-b", "main")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "candidate")
+    candidate_commit = _git(repo, "rev-parse", "HEAD")
+
+    job = jobs / "job-1"
+    job.mkdir()
+    (job / "status.json").write_text('{"status":"done"}\n', encoding="utf-8")
+    jobs.chmod(0o700)
+    (jobs / ".gitkeep").chmod(0o600)
+    work = tmp_path / "work"
+    work.mkdir()
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+
+    result = _source_launcher_script(
+        bash,
+        repo,
+        (
+            f"EXPECTED_COMMIT='{candidate_commit}'\n"
+            f"WORK_DIR='{_bash_path(bash, work)}'\n"
+            f"CANDIDATE_TREE='{_bash_path(bash, work)}/candidate-tree'\n"
+            f"write_retained_jobs_manifest '{_bash_path(bash, before)}'\n"
+            "stage_candidate_tree\n"
+            "run_candidate_guarded_deployment\n"
+            f"write_retained_jobs_manifest '{_bash_path(bash, after)}'\n"
+            f"compare_retained_jobs_manifests '{_bash_path(bash, before)}' '{_bash_path(bash, after)}'\n"
+            "echo already-at-expected-retained-jobs=pass\n"
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "already-at-expected-deploy=pass" in result.stdout
+    assert "already-at-expected-retained-jobs=pass" in result.stdout
 
 
 def test_http_acceptance_proves_authentication_and_both_results() -> None:

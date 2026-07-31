@@ -17,7 +17,7 @@ It does not authorise:
 
 An authenticated author or publishing client can check whether manuscript Markdown is structurally acceptable before a job or publication output is created.
 
-The production proof must show that this capability works without weakening the existing deterministic four-format publishing service or changing retained books.
+The production proof must show that this capability works without weakening the existing deterministic four-format publishing service or changing retained runtime job data.
 
 ## Candidate boundary
 
@@ -62,7 +62,7 @@ chmod 0700 "$LAUNCHER"
 
 This is one launcher invocation. The launcher performs and logs the internal mechanical steps. Merrin must not be asked to relay each command separately.
 
-The launcher keeps retained-storage manifests in a root-only working directory.
+The launcher keeps retained-job manifests in a root-only working directory.
 It stages the exact accepted candidate tree separately under `/run` before the
 production checkout moves. Every script or Python module used before the
 guarded fast-forward comes from that staged candidate tree, including:
@@ -74,7 +74,7 @@ guarded fast-forward comes from that staged candidate tree, including:
 The staged candidate tree is owned as `root:www-data` and made readable and
 traversable by the service account, but not writable by it. The launcher verifies
 that `www-data` can read the staged compatibility code and cannot write to the
-staged tree or its parent path. Logs and retained-storage manifests remain
+staged tree or its parent path. Logs and retained-job manifests remain
 root-only.
 
 The candidate deployment script is then executed from the staged tree with an
@@ -82,6 +82,28 @@ explicit `--repo-root /opt/book-system` target. This keeps script authority in
 the reviewed candidate while all repository mutation remains bounded to the
 production checkout. The temporary candidate tree is removed by the launcher
 cleanup trap when the operation exits.
+
+### Retained Data Boundary
+
+The outer deployment invariant is the retained runtime job data rooted at:
+
+```text
+books/jobs
+```
+
+The repository-level `books` tree also contains tracked scaffold paths used to
+keep runtime directories present in Git. The outer retained-data manifest treats
+only these two scaffold effects as outside retained runtime identity:
+
+- the reviewed tracked placeholder `books/jobs/.gitkeep`; and
+- the deployment-normalised mode of the `books/jobs` root directory.
+
+The launcher fails closed if any additional tracked path exists below
+`books/jobs`. Every real retained job descendant remains in the manifest with
+path, type, mode, file size and SHA-256, or symlink target. Any added, removed,
+modified, chmodded or replaced retained job path still fails acceptance.
+Mismatch diagnostics are bounded and machine-readable, showing path/property
+changes without printing manuscript contents or secrets.
 
 ## Exact Pandoc authority
 
@@ -126,7 +148,7 @@ Before mutation, the launcher must prove:
 6. the running launcher digest equals the launcher stored at that candidate;
 7. `config/env` remains root-owned mode `0600`;
 8. no second acceptance operation is running; and
-9. retained book storage has been recorded before mutation.
+9. retained runtime job data has been recorded before mutation.
 
 A failed preflight makes no application deployment.
 
@@ -149,7 +171,8 @@ The launcher must then:
 12. build temporary standard PDF, ND PDF, EPUB and DOCX files;
 13. verify both PDF signatures and both ZIP-based archive structures;
 14. remove temporary acceptance outputs;
-15. prove retained book storage is unchanged from the pre-deployment manifest;
+15. prove retained runtime job data is unchanged from the pre-deployment
+    manifest, ignoring only the reviewed scaffold boundary above;
 16. prove the final checkout is clean at the exact candidate; and
 17. leave one root-readable acceptance log under `/var/log/book-system`.
 
@@ -169,6 +192,10 @@ service-runtime-path=pass
 retained-books-unchanged=pass
 ```
 
+The passing log also records `retained-jobs-before-sha256`,
+`retained-jobs-after-sha256` and `retained-jobs-unchanged=pass` for the
+corrected outer manifest boundary.
+
 The live helper prints structured evidence for:
 
 - health;
@@ -178,7 +205,8 @@ The live helper prints structured evidence for:
 - valid validation;
 - invalid validation;
 - four output filenames, sizes and SHA-256 digests; and
-- unchanged persistent book storage.
+- unchanged persistent book storage for the inner live-acceptance side-effect
+  snapshot.
 
 The API key itself must never appear in the log.
 

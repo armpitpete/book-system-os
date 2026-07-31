@@ -57,66 +57,175 @@ cleanup() {
   fi
 }
 
-write_books_manifest() {
+write_retained_jobs_manifest() {
   local destination="$1"
-  python3 - "$REPO_ROOT/books" "$destination" <<'PY'
+  python3 - "$REPO_ROOT" "$destination" <<'PY'
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import subprocess
 import stat
 import sys
 from pathlib import Path
 
-root = Path(sys.argv[1])
+repo_root = Path(sys.argv[1]).resolve()
 destination = Path(sys.argv[2])
+root = repo_root / "books" / "jobs"
+allowed_tracked = {"books/jobs/.gitkeep"}
 records: list[dict[str, object]] = []
 
-if root.exists():
-    if not root.is_dir() or root.is_symlink():
-        raise SystemExit("persistent books root is not a real directory")
-    stack = [root]
-    while stack:
-        current = stack.pop()
-        paths = [current] if current == root else []
-        if current == root:
-            paths = [root]
-        entries = sorted(os.scandir(current), key=lambda entry: entry.name)
-        paths.extend(Path(entry.path) for entry in entries)
-        directories: list[Path] = []
-        for path in paths:
-            metadata = path.lstat()
-            relative = "." if path == root else path.relative_to(root).as_posix()
-            record: dict[str, object] = {
-                "path": relative,
-                "mode": stat.S_IMODE(metadata.st_mode),
-            }
-            if stat.S_ISDIR(metadata.st_mode):
-                record["type"] = "directory"
-                if path != root:
-                    directories.append(path)
-            elif stat.S_ISREG(metadata.st_mode):
-                digest = hashlib.sha256()
-                with path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                record.update(
-                    type="file",
-                    size=metadata.st_size,
-                    sha256=digest.hexdigest(),
-                )
-            elif stat.S_ISLNK(metadata.st_mode):
-                record.update(type="symlink", target=os.readlink(path))
-            else:
-                record["type"] = "other"
-            records.append(record)
-        stack.extend(reversed(directories))
+tracked_result = subprocess.run(
+    ["git", "-C", str(repo_root), "ls-files", "-z", "--", "books/jobs"],
+    check=True,
+    stdout=subprocess.PIPE,
+)
+tracked_paths = {
+    item.decode("utf-8", errors="surrogateescape")
+    for item in tracked_result.stdout.split(b"\0")
+    if item
+}
+unexpected_tracked = sorted(tracked_paths - allowed_tracked)
+if unexpected_tracked:
+    raise SystemExit(
+        "unexpected tracked path under books/jobs: "
+        + ", ".join(unexpected_tracked[:20])
+    )
+
+if not root.exists() or not root.is_dir() or root.is_symlink():
+    raise SystemExit("persistent jobs root is not a real directory")
+
+records.append({"path": ".", "type": "directory"})
+stack = [root]
+while stack:
+    current = stack.pop()
+    entries = sorted(os.scandir(current), key=lambda entry: entry.name)
+    directories: list[Path] = []
+    for entry in entries:
+        path = Path(entry.path)
+        relative = path.relative_to(root).as_posix()
+        if relative == ".gitkeep" and "books/jobs/.gitkeep" in tracked_paths:
+            continue
+
+        metadata = path.lstat()
+        record: dict[str, object] = {
+            "path": relative,
+            "mode": stat.S_IMODE(metadata.st_mode),
+        }
+        if stat.S_ISDIR(metadata.st_mode):
+            record["type"] = "directory"
+            directories.append(path)
+        elif stat.S_ISREG(metadata.st_mode):
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            record.update(
+                type="file",
+                size=metadata.st_size,
+                sha256=digest.hexdigest(),
+            )
+        elif stat.S_ISLNK(metadata.st_mode):
+            record.update(type="symlink", target=os.readlink(path))
+        else:
+            record["type"] = "other"
+        records.append(record)
+    stack.extend(reversed(directories))
 
 destination.write_text(
     json.dumps(records, sort_keys=True, separators=(",", ":")),
     encoding="utf-8",
 )
+PY
+}
+
+compare_retained_jobs_manifests() {
+  local before="$1"
+  local after="$2"
+  python3 - "$before" "$after" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+MAX_ITEMS = 25
+SAFE_VALUE_PROPERTIES = {"type", "mode", "size", "target"}
+
+
+def load(path: str) -> dict[str, dict[str, Any]]:
+    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {record["path"]: record for record in records}
+
+
+def brief(record: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "path": record["path"],
+        "type": record.get("type"),
+    }
+    if "mode" in record:
+        result["mode"] = record["mode"]
+    if "size" in record:
+        result["size"] = record["size"]
+    return result
+
+
+before = load(sys.argv[1])
+after = load(sys.argv[2])
+
+added: list[dict[str, Any]] = []
+removed: list[dict[str, Any]] = []
+changed: list[dict[str, Any]] = []
+
+for path in sorted(set(before) | set(after)):
+    if path not in before:
+        added.append(brief(after[path]))
+        continue
+    if path not in after:
+        removed.append(brief(before[path]))
+        continue
+    before_record = before[path]
+    after_record = after[path]
+    properties = sorted(
+        key
+        for key in set(before_record) | set(after_record)
+        if key != "path" and before_record.get(key) != after_record.get(key)
+    )
+    if not properties:
+        continue
+    item: dict[str, Any] = {
+        "path": path,
+        "properties": properties,
+    }
+    for property_name in properties:
+        if property_name not in SAFE_VALUE_PROPERTIES:
+            continue
+        item[f"before_{property_name}"] = before_record.get(property_name)
+        item[f"after_{property_name}"] = after_record.get(property_name)
+    changed.append(item)
+
+if not added and not removed and not changed:
+    raise SystemExit(0)
+
+summary = {
+    "status": "mismatch",
+    "added_count": len(added),
+    "removed_count": len(removed),
+    "changed_count": len(changed),
+    "added": added[:MAX_ITEMS],
+    "removed": removed[:MAX_ITEMS],
+    "changed": changed[:MAX_ITEMS],
+    "truncated": any(
+        len(items) > MAX_ITEMS for items in (added, removed, changed)
+    ),
+}
+print(
+    "retained-jobs-mismatch="
+    + json.dumps(summary, sort_keys=True, separators=(",", ":"))
+)
+raise SystemExit(1)
 PY
 }
 
@@ -295,11 +404,11 @@ main() {
   echo "launcher-sha256=$RUNNING_LAUNCHER_SHA"
   echo "acceptance-log=$LOG_FILE"
 
-  BEFORE_MANIFEST="$WORK_DIR/books-before.json"
-  AFTER_MANIFEST="$WORK_DIR/books-after.json"
-  write_books_manifest "$BEFORE_MANIFEST"
+  BEFORE_MANIFEST="$WORK_DIR/retained-jobs-before.json"
+  AFTER_MANIFEST="$WORK_DIR/retained-jobs-after.json"
+  write_retained_jobs_manifest "$BEFORE_MANIFEST"
   chmod 0600 "$BEFORE_MANIFEST"
-  echo "retained-books-before-sha256=$(sha256sum "$BEFORE_MANIFEST" | awk '{print $1}')"
+  echo "retained-jobs-before-sha256=$(sha256sum "$BEFORE_MANIFEST" | awk '{print $1}')"
 
   echo
   echo "===== CANDIDATE EXECUTION SURFACE ====="
@@ -342,11 +451,12 @@ main() {
       --env-file "$CONFIG_FILE" \
       --expected-commit "$EXPECTED_COMMIT"
 
-  write_books_manifest "$AFTER_MANIFEST"
+  write_retained_jobs_manifest "$AFTER_MANIFEST"
   chmod 0600 "$AFTER_MANIFEST"
-  cmp --silent "$BEFORE_MANIFEST" "$AFTER_MANIFEST" \
-    || fail "deployment or acceptance changed retained book storage"
-  echo "retained-books-after-sha256=$(sha256sum "$AFTER_MANIFEST" | awk '{print $1}')"
+  compare_retained_jobs_manifests "$BEFORE_MANIFEST" "$AFTER_MANIFEST" \
+    || fail "deployment or acceptance changed retained job data"
+  echo "retained-jobs-after-sha256=$(sha256sum "$AFTER_MANIFEST" | awk '{print $1}')"
+  echo "retained-jobs-unchanged=pass"
   echo "retained-books-unchanged=pass"
 
   [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]] || fail "final deployed commit changed"

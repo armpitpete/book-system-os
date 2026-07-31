@@ -10,7 +10,8 @@ Book System OS is the publishing/job system behind:
 
     publish.toiletrage.co.uk
 
-The current service supports the original book-system route and the first `/api/v1` publish gateway status route.
+The current service supports the original book-system route, `/api/v1` status,
+manuscript validation and publish dry-run planning.
 
 ## Important URLs
 
@@ -38,13 +39,44 @@ The `/api/v1/status` endpoint reports:
 At the current checkpoint, `/api/v1/status` should list these implemented routes:
 
 - `GET /health`
+- `GET /ready`
 - `GET /api/v1/status`
+- `POST /api/v1/validate`
+- `POST /api/v1/publish/dry-run`
 - `POST /api/submit`
 - `GET /api/jobs/{job_id}`
 
-It may also list planned v1 publish routes that are not implemented yet.
+It may also list planned v1 publish execution routes that are not implemented yet.
 
 Do not treat `not_yet_implemented` routes as live behaviour.
+
+## Publish dry-run
+
+The publish dry-run route is:
+
+    POST /api/v1/publish/dry-run
+
+It uses the existing API-key authentication in production.
+
+Dry-run validates the supplied manuscript and returns whether it is publishable,
+the validation findings and summary, the source byte count and SHA-256, and the
+four planned output files:
+
+- `pdf_standard` -> `book-standard.pdf`
+- `pdf_nd` -> `book-nd.pdf`
+- `epub` -> `book.epub`
+- `docx` -> `book.docx`
+
+The route must report:
+
+- `job_state: production`
+- `rendering_attempted: false`
+- `job_created: false`
+
+Dry-run must not create a job directory, queue entry, lock, history record, log
+directory, output directory, manifest, retained manuscript copy, worker activity
+or export subprocess. Validation may still use the existing sandboxed Pandoc
+parser subprocess.
 
 ## Dashboard version label
 
@@ -354,7 +386,8 @@ Important fields:
 
 If `write_enabled` is true, treat the system as capable of accepting write actions through implemented write routes.
 
-Do not assume planned `/api/v1/publish` routes exist until they move from `not_yet_implemented` to `implemented`.
+Do not assume planned `/api/v1/publish` execution routes exist until they move
+from `not_yet_implemented` to `implemented`.
 
 ## Stop rules
 
@@ -374,6 +407,7 @@ Stop and investigate if:
 - queue saturation creates an additional job
 - an export timeout leaves Pandoc or XeLaTeX descendants running
 - a resource-limit failure deletes or changes an existing production job
+- publish dry-run creates retained files, queues work or attempts export rendering
 - a deploy script reports API readiness failure
 
 ## Current manual gap

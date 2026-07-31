@@ -13,6 +13,7 @@ from app.services.manuscript_validation import (
     ValidationServiceError,
     validate_manuscript,
 )
+from app.services.publish_plan import build_publish_dry_run
 from app.services.readiness_guard import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
 from app.services.security import SecurityMiddleware
@@ -53,6 +54,11 @@ class BookValidateRequest(BaseModel):
     content: str
 
 
+class BookPublishDryRunRequest(BaseModel):
+    title: str = Field(default="Untitled", max_length=200)
+    content: str
+
+
 class ValidationFindingResponse(BaseModel):
     code: str
     severity: Literal["error", "warning"]
@@ -85,6 +91,24 @@ class BookValidateResponse(BaseModel):
     contract_version: Literal["0.2"]
 
 
+class PublishOutputResponse(BaseModel):
+    key: Literal["pdf_standard", "pdf_nd", "epub", "docx"]
+    filename: str
+    media_type: str
+
+
+class BookPublishDryRunResponse(BaseModel):
+    publishable: bool
+    validation: BookValidateResponse
+    outputs: list[PublishOutputResponse]
+    source_bytes: int
+    source_sha256: str
+    job_state: Literal["production"]
+    rendering_attempted: Literal[False]
+    job_created: Literal[False]
+    contract_version: Literal["0.2"]
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -111,11 +135,11 @@ def api_v1_status() -> dict:
             "GET /ready",
             "GET /api/v1/status",
             "POST /api/v1/validate",
+            "POST /api/v1/publish/dry-run",
             "POST /api/submit",
             "GET /api/jobs/{job_id}",
         ],
         "not_yet_implemented": [
-            "POST /api/v1/publish/dry-run",
             "POST /api/v1/publish",
             "GET /api/v1/publish/{publish_id}",
             "GET /api/v1/publishes",
@@ -131,6 +155,15 @@ def api_v1_status() -> dict:
 )
 def api_validate(payload: BookValidateRequest) -> dict[str, object]:
     return validate_manuscript(title=payload.title, markdown=payload.content)
+
+
+@app.post(
+    "/api/v1/publish/dry-run",
+    dependencies=[Depends(api_key_required)],
+    response_model=BookPublishDryRunResponse,
+)
+def api_publish_dry_run(payload: BookPublishDryRunRequest) -> dict[str, object]:
+    return build_publish_dry_run(title=payload.title, markdown=payload.content)
 
 
 @app.post("/api/submit", dependencies=[Depends(api_key_required)])

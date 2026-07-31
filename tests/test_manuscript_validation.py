@@ -539,11 +539,15 @@ def test_validation_endpoint_rejects_malformed_request_without_job(
     assert job_directories(tmp_path) == []
 
 
-def test_status_reports_only_validation_as_newly_implemented(client: TestClient) -> None:
+def test_status_reports_validation_and_dry_run_as_implemented(
+    client: TestClient,
+) -> None:
     response = client.get("/api/v1/status")
 
     assert response.status_code == 200
     payload = response.json()
     assert "POST /api/v1/validate" in payload["implemented"]
     assert "POST /api/v1/validate" not in payload["not_yet_implemented"]
+    assert "POST /api/v1/publish/dry-run" in payload["implemented"]
+    assert "POST /api/v1/publish/dry-run" not in payload["not_yet_implemented"]
     assert "POST /api/v1/publish" in payload["not_yet_implemented"]

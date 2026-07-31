@@ -11,15 +11,12 @@ from pathlib import Path
 import pytest
 
 import app.pipeline.run_pipeline as pipeline_module
+from app.services.publish_plan import PUBLISH_OUTPUTS
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "h08"
-EXPECTED_OUTPUTS = {
-    "book-standard.pdf",
-    "book-nd.pdf",
-    "book.epub",
-    "book.docx",
-}
+EXPECTED_MANIFEST_OUTPUTS = {output.key: output.filename for output in PUBLISH_OUTPUTS}
+EXPECTED_OUTPUTS = set(EXPECTED_MANIFEST_OUTPUTS.values())
 REQUIRED_COVERAGE = {
     "long-chapters",
     "unicode-and-punctuation",
@@ -281,6 +278,7 @@ def test_representative_corpus_builds_valid_four_format_outputs(
     assert status["step"] == "complete"
     assert manifest["status"]["status"] == "done"
     assert manifest["status"]["step"] == "complete"
+    assert manifest["outputs"] == EXPECTED_MANIFEST_OUTPUTS
     assert set(manifest["outputs"].values()) == EXPECTED_OUTPUTS
 
 

@@ -34,12 +34,16 @@ def test_release_launcher_has_valid_shell_syntax_and_protected_contract() -> Non
         "git_value \"$REPO_ROOT\" merge-base --is-ancestor",
         "Running launcher does not match the exact target commit",
         "Persistent job storage changed during deployment or acceptance",
+        "book-system-api.service",
+        "book-system-worker.service",
         "CORPUS RUNTIME RELEASE — PASS",
     )
     for marker in required:
         assert marker in text
 
     assert '\n"$CANDIDATE_ROOT/scripts/production_v2_01_acceptance.sh" \\\n' not in text
+    assert "book-api.service" not in text
+    assert "book-worker.service" not in text
     assert "git reset --hard" not in text
     assert "git clean" not in text
     assert "rollback" not in text.lower()

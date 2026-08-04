@@ -23,7 +23,7 @@ def test_release_launcher_has_valid_shell_syntax_and_protected_contract() -> Non
         "--expected-before",
         "--target-commit",
         'DEPLOY $TARGET_COMMIT',
-        "production_v2_01_acceptance.sh",
+        'bash "$CANDIDATE_ROOT/scripts/production_v2_01_acceptance.sh"',
         "corpus_runtime_live_acceptance.py",
         "storage-before.json",
         "storage-after.json",
@@ -39,6 +39,7 @@ def test_release_launcher_has_valid_shell_syntax_and_protected_contract() -> Non
     for marker in required:
         assert marker in text
 
+    assert '\n"$CANDIDATE_ROOT/scripts/production_v2_01_acceptance.sh" \\\n' not in text
     assert "git reset --hard" not in text
     assert "git clean" not in text
     assert "rollback" not in text.lower()

@@ -178,7 +178,7 @@ is_sha "$TARGET_COMMIT" || {
   exit 2
 }
 
-for command in git sha256sum cmp systemctl tee /usr/bin/python3; do
+for command in git sha256sum cmp systemctl tee /usr/bin/python3 bash; do
   require_command "$command"
 done
 
@@ -237,7 +237,7 @@ snapshot_tree "$REPO_ROOT/config" "$EVIDENCE_ROOT/config-before.json"
 snapshot_tree "/etc/systemd/system" "$EVIDENCE_ROOT/systemd-before.json"
 
 set +e
-"$CANDIDATE_ROOT/scripts/production_v2_01_acceptance.sh" \
+bash "$CANDIDATE_ROOT/scripts/production_v2_01_acceptance.sh" \
   --repo-root "$REPO_ROOT" \
   --expected-commit "$TARGET_COMMIT" \
   --execute \

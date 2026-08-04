@@ -92,15 +92,26 @@ def local_name(tag: str) -> str:
 
 
 def normalise_epub_member(name: str, data: bytes) -> bytes:
-    if not name.lower().endswith(".opf"):
+    lower_name = name.lower()
+    if not lower_name.endswith((".opf", ".ncx")):
         return data
 
     root = ElementTree.fromstring(data)
     for node in root.iter():
-        if local_name(node.tag) == "identifier":
-            node.text = "VOLATILE-PACKAGE-IDENTIFIER"
-        elif local_name(node.tag) == "meta" and node.attrib.get("property") == "dcterms:modified":
-            node.text = "VOLATILE-MODIFIED-TIMESTAMP"
+        node_name = local_name(node.tag)
+        if lower_name.endswith(".opf"):
+            if node_name == "identifier":
+                node.text = "VOLATILE-PACKAGE-IDENTIFIER"
+            elif node_name == "date":
+                node.text = "VOLATILE-PACKAGE-DATE"
+            elif node_name == "meta" and node.attrib.get("property") == "dcterms:modified":
+                node.text = "VOLATILE-MODIFIED-TIMESTAMP"
+        elif (
+            node_name == "meta"
+            and node.attrib.get("name") == "dtb:uid"
+            and "content" in node.attrib
+        ):
+            node.attrib["content"] = "VOLATILE-PACKAGE-IDENTIFIER"
     return ElementTree.tostring(root, encoding="utf-8")
 
 
@@ -247,11 +258,13 @@ def test_repeated_builds_are_semantically_reproducible(
         "fixture": "semantic-reproducibility",
         "build_delay_seconds": 1.1,
         "normalisations": {
-            "pdf": ["ZIP or PDF container metadata excluded; page count and extracted text compared"],
+            "pdf": ["PDF container metadata excluded; page count and extracted text compared"],
             "epub": [
                 "ZIP entry timestamps excluded by member-wise reading",
                 "OPF identifier text replaced",
+                "OPF dc:date text replaced",
                 "OPF dcterms:modified text replaced",
+                "NCX dtb:uid package-identifier reference replaced",
             ],
             "docx": [
                 "ZIP entry timestamps excluded by member-wise reading",

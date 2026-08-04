@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.pipeline.exporters import ExportTimeoutError, pandoc_export
+from app.pipeline.input_validation import ManuscriptInputError, validate_local_image_files
 from app.pipeline.structural import structural_cleanup
 from app.services.job_queue import append_job_event, read_status, utc_now, write_status
 from app.services.provenance import (
@@ -29,6 +30,8 @@ from app.utils.atomic_files import atomic_write_json
 def _failure_step(exc: Exception) -> str:
     if isinstance(exc, ProvenanceError):
         return "source-integrity"
+    if isinstance(exc, ManuscriptInputError):
+        return "input-validation"
     if isinstance(exc, ExportTimeoutError):
         return "export-timeout"
     if isinstance(exc, ResourceLimitError):
@@ -37,7 +40,7 @@ def _failure_step(exc: Exception) -> str:
 
 
 def _failure_extra(exc: Exception) -> dict[str, object] | None:
-    if isinstance(exc, ProvenanceError):
+    if isinstance(exc, (ProvenanceError, ManuscriptInputError)):
         return {"failure_code": exc.code}
     if isinstance(exc, ResourceLimitError):
         return {
@@ -125,6 +128,14 @@ def run_pipeline(job_dir: Path) -> int:
         cleaned_file = work_dir / "book-clean.md"
         cleaned_file.write_bytes(cleaned_bytes)
         enforce_job_storage_limits(job_dir)
+
+        write_status(
+            job_dir,
+            status="running",
+            step="input-validation",
+            message="Validating referenced manuscript assets",
+        )
+        validate_local_image_files(cleaned, source_dir=input_file.parent)
 
         write_status(
             job_dir,

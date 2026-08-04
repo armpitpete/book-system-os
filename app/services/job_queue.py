@@ -6,8 +6,14 @@ import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
+from app.services.provenance import (
+    ControlledSourceRecord,
+    ProvenanceError,
+    build_source_identity,
+    verify_job_source,
+)
 from app.services.resource_limits import check_job_admission
 from app.utils.atomic_files import atomic_write_json
 from app.utils.paths import jobs_dir
@@ -230,6 +236,25 @@ def retry_job(job_dir: Path) -> None:
     if not metadata_file.is_file():
         raise FileNotFoundError("Cannot retry job because metadata.json is missing")
 
+    try:
+        verify_job_source(job_dir)
+    except ProvenanceError as exc:
+        write_status(
+            job_dir,
+            status="failed",
+            step="source-integrity",
+            message=str(exc),
+            extra={"failure_code": exc.code},
+        )
+        append_job_event(
+            job_dir,
+            "source-integrity-failed",
+            str(exc),
+            failure_code=exc.code,
+            operation="retry",
+        )
+        raise
+
     retry_count = safe_int(status.get("retry_count")) + 1
     retry_at = utc_now()
 
@@ -289,7 +314,14 @@ def read_status(job_dir: Path) -> dict[str, Any]:
     return data
 
 
-def create_job(*, title: str, markdown: str, state: str = DEFAULT_JOB_STATE) -> tuple[str, Path]:
+def create_job(
+    *,
+    title: str,
+    markdown: str,
+    state: str = DEFAULT_JOB_STATE,
+    control_record: Mapping[str, Any] | ControlledSourceRecord | None = None,
+) -> tuple[str, Path]:
+    source_identity = build_source_identity(markdown, control_record)
     check_job_admission(markdown)
 
     job_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -304,9 +336,10 @@ def create_job(*, title: str, markdown: str, state: str = DEFAULT_JOB_STATE) -> 
         "title": title.strip() or "Untitled",
         "slug": slugify_title(title),
         "created_at": utc_now(),
+        "source_identity": source_identity,
     }
     atomic_write_json(job_dir / "metadata.json", meta)
-    (job_dir / "input" / "book.md").write_text(markdown, encoding="utf-8")
+    (job_dir / "input" / "book.md").write_bytes(markdown.encode("utf-8"))
     write_status(job_dir, status="queued", step="waiting", message="Job queued", state=state)
     append_job_event(
         job_dir,

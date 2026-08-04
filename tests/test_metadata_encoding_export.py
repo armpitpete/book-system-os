@@ -14,15 +14,11 @@ from app.services.publish_plan import PUBLISH_OUTPUTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "h08" / "unusual-metadata.md"
 EXPECTED_OUTPUTS = {output.filename for output in PUBLISH_OUTPUTS}
-METADATA_SENTINELS = (
-    "Café ‘North’ — Αθήνα",
-    "Zoë O'Connor",
-    "naïve metadata",
-    "coöperation",
-    "façade",
-    "résumé",
-    "Αθήνα",
-)
+TITLE = "Café ‘North’ — Αθήνα"
+AUTHOR = "Zoë O'Connor"
+SUBJECT = "A folded subject about naïve metadata, coöperation, and Αθήνα."
+KEYWORDS = ("façade", "résumé", "Αθήνα")
+SOURCE_SENTINELS = (TITLE, AUTHOR, "naïve metadata", "coöperation", *KEYWORDS)
 BODY_SENTINEL = "BODY-METADATA-UTF8-OK"
 
 
@@ -79,7 +75,7 @@ def test_unusual_utf8_metadata_survives_all_four_exports(
 
     manuscript = FIXTURE.read_bytes()
     decoded = manuscript.decode("utf-8")
-    for sentinel in (*METADATA_SENTINELS, BODY_SENTINEL):
+    for sentinel in (*SOURCE_SENTINELS, BODY_SENTINEL):
         assert sentinel in decoded
 
     job_dir = prepare_job(tmp_path, manuscript, "h08-unusual-metadata")
@@ -94,7 +90,7 @@ def test_unusual_utf8_metadata_survives_all_four_exports(
     assert_pdf(job_dir / "output" / "book-nd.pdf")
 
     cleaned = (job_dir / "work" / "book-clean.md").read_text(encoding="utf-8")
-    for sentinel in (*METADATA_SENTINELS, BODY_SENTINEL):
+    for sentinel in (*SOURCE_SENTINELS, BODY_SENTINEL):
         assert sentinel in cleaned
 
     epub_metadata = semantic_text(
@@ -109,10 +105,15 @@ def test_unusual_utf8_metadata_survives_all_four_exports(
             lambda name: name.lower() == "docprops/core.xml",
         )
     )
-    for sentinel in METADATA_SENTINELS:
-        expected = semantic_text(sentinel)
-        assert expected in epub_metadata
-        assert expected in docx_metadata
+
+    # EPUB OPF natively carries title, creator, language and subject. Pandoc does
+    # not map the separate Markdown keywords field into OPF package metadata.
+    for sentinel in (TITLE, AUTHOR, SUBJECT, "en-GB"):
+        assert semantic_text(sentinel) in epub_metadata
+
+    # DOCX core properties additionally expose the source keywords field.
+    for sentinel in (TITLE, AUTHOR, SUBJECT, "en-GB", *KEYWORDS):
+        assert semantic_text(sentinel) in docx_metadata
 
     status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
     manifest = json.loads((job_dir / "manifest.json").read_text(encoding="utf-8"))

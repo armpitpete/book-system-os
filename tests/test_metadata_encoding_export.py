@@ -12,6 +12,7 @@ import app.pipeline.run_pipeline as pipeline_module
 from app.services.publish_plan import PUBLISH_OUTPUTS
 
 
+# Corpus case #87: format-native metadata preservation and deterministic rejection.
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "h08" / "unusual-metadata.md"
 EXPECTED_OUTPUTS = {output.filename for output in PUBLISH_OUTPUTS}
 TITLE = "Café ‘North’ — Αθήνα"

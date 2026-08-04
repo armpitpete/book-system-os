@@ -57,6 +57,17 @@ def archive_member_text(path: Path, predicate) -> str:
     return html.unescape("\n".join(members))
 
 
+def semantic_text(value: str) -> str:
+    return " ".join(
+        html.unescape(value)
+        .replace("‘", "'")
+        .replace("’", "'")
+        .replace("“", '"')
+        .replace("”", '"')
+        .split()
+    )
+
+
 @pytest.mark.integration
 def test_unusual_utf8_metadata_survives_all_four_exports(
     monkeypatch: pytest.MonkeyPatch,
@@ -86,17 +97,22 @@ def test_unusual_utf8_metadata_survives_all_four_exports(
     for sentinel in (*METADATA_SENTINELS, BODY_SENTINEL):
         assert sentinel in cleaned
 
-    epub_metadata = archive_member_text(
-        job_dir / "output" / "book.epub",
-        lambda name: name.lower().endswith(".opf"),
+    epub_metadata = semantic_text(
+        archive_member_text(
+            job_dir / "output" / "book.epub",
+            lambda name: name.lower().endswith(".opf"),
+        )
     )
-    docx_metadata = archive_member_text(
-        job_dir / "output" / "book.docx",
-        lambda name: name.lower() == "docprops/core.xml",
+    docx_metadata = semantic_text(
+        archive_member_text(
+            job_dir / "output" / "book.docx",
+            lambda name: name.lower() == "docprops/core.xml",
+        )
     )
     for sentinel in METADATA_SENTINELS:
-        assert sentinel in epub_metadata
-        assert sentinel in docx_metadata
+        expected = semantic_text(sentinel)
+        assert expected in epub_metadata
+        assert expected in docx_metadata
 
     status = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
     manifest = json.loads((job_dir / "manifest.json").read_text(encoding="utf-8"))

@@ -281,7 +281,7 @@ cmp -s "$EVIDENCE_ROOT/config-before.json" "$EVIDENCE_ROOT/config-after.json" ||
 cmp -s "$EVIDENCE_ROOT/systemd-before.json" "$EVIDENCE_ROOT/systemd-after.json" || \
   fail "Installed systemd unit content or metadata changed unexpectedly"
 
-for unit in book-api.service book-worker.service; do
+for unit in book-system-api.service book-system-worker.service; do
   systemctl is-active --quiet "$unit" || fail "$unit is not active after acceptance"
 done
 

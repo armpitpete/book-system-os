@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha256
 
 from app.services.manuscript_validation import CONTRACT_VERSION, validate_manuscript
+from app.services.provenance import source_identity_text
 
 
 @dataclass(frozen=True)
@@ -51,15 +51,15 @@ def publish_output_plan() -> list[dict[str, str]]:
 
 
 def build_publish_dry_run(*, title: str, markdown: str) -> dict[str, object]:
-    source = markdown.encode("utf-8")
+    source = source_identity_text(markdown)
     validation = validate_manuscript(title=title, markdown=markdown)
 
     return {
         "publishable": validation["valid"],
         "validation": validation,
         "outputs": publish_output_plan(),
-        "source_bytes": len(source),
-        "source_sha256": sha256(source).hexdigest(),
+        "source_bytes": source["source_bytes"],
+        "source_sha256": source["source_sha256"],
         "job_state": "production",
         "rendering_attempted": False,
         "job_created": False,

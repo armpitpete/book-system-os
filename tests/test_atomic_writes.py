@@ -192,8 +192,17 @@ def test_pipeline_manifest_uses_shared_atomic_writer(
         "docx": "book.docx",
     }
 
+    def export_with_outputs(
+        _cleaned: Path,
+        output_dir: Path,
+        _log_file: Path,
+    ) -> dict[str, str]:
+        for key, filename in outputs.items():
+            (output_dir / filename).write_bytes(key.encode("utf-8"))
+        return outputs
+
     monkeypatch.setattr(run_pipeline, "structural_cleanup", lambda raw: raw)
-    monkeypatch.setattr(run_pipeline, "pandoc_export", lambda *_args: outputs)
+    monkeypatch.setattr(run_pipeline, "pandoc_export", export_with_outputs)
 
     calls: list[Path] = []
     real_write = atomic_files.atomic_write_json

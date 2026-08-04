@@ -1,0 +1,2 @@
+trial_evidence_id,event_started_at,event_ended_at,elapsed_minutes,hands_on_minutes,phase,actor,manual_or_automated,event_type,cause,result,customer_contact_required,notes
+EXAMPLE,YYYY-MM-DDTHH:MM:SSZ,YYYY-MM-DDTHH:MM:SSZ,0,0,intake,operator,manual,source_inventory,initial_intake,completed,no,Replace this example row before use

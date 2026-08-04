@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from typing import Any, Iterator
+from urllib.parse import unquote
 
 from app.pipeline.structural import structural_cleanup
 from app.services.resource_limits import (
@@ -70,6 +71,54 @@ def _raw_format(node: dict[str, Any]) -> str | None:
         return None
     value = content[0]
     return value if isinstance(value, str) else None
+
+
+def _node_attribute(node: dict[str, Any]) -> list[object] | None:
+    content = node.get("c")
+    if not isinstance(content, list):
+        return None
+
+    node_type = node.get("t")
+    if node_type == "Header" and len(content) >= 2:
+        attribute = content[1]
+    elif node_type in {"Div", "Span"} and content:
+        attribute = content[0]
+    else:
+        return None
+
+    if not isinstance(attribute, list) or len(attribute) < 3:
+        return None
+    return attribute
+
+
+def _node_identifier(node: dict[str, Any]) -> str | None:
+    attribute = _node_attribute(node)
+    if attribute is None:
+        return None
+    identifier = attribute[0]
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    return identifier
+
+
+def _link_target(node: dict[str, Any]) -> str | None:
+    if node.get("t") != "Link":
+        return None
+    content = node.get("c")
+    if not isinstance(content, list) or len(content) < 3:
+        return None
+    target = content[2]
+    if not isinstance(target, list) or not target:
+        return None
+    value = target[0]
+    return value if isinstance(value, str) else None
+
+
+def _internal_fragment(target: str) -> str | None:
+    if not target.startswith("#"):
+        return None
+    fragment = unquote(target[1:])
+    return fragment or None
 
 
 def _metadata_value_present(value: object) -> bool:
@@ -147,6 +196,25 @@ def _analyse_document(
         for raw_format in [_raw_format(node)]
         if raw_format is not None
     ]
+    identifiers = {
+        identifier
+        for node in nodes
+        if node.get("t") in {"Header", "Div", "Span"}
+        for identifier in [_node_identifier(node)]
+        if identifier is not None
+    }
+    internal_fragments = [
+        fragment
+        for node in nodes
+        if node.get("t") == "Link"
+        for target in [_link_target(node)]
+        if target is not None
+        for fragment in [_internal_fragment(target)]
+        if fragment is not None
+    ]
+    broken_internal_fragments = [
+        fragment for fragment in internal_fragments if fragment not in identifiers
+    ]
 
     if not heading_levels:
         warnings.append(
@@ -181,6 +249,15 @@ def _analyse_document(
                 "raw-format-content",
                 "warning",
                 "The manuscript contains raw format-specific content that may not appear in every output format.",
+            )
+        )
+
+    for fragment in sorted(set(broken_internal_fragments)):
+        warnings.append(
+            _finding(
+                "broken-internal-link",
+                "warning",
+                f"Internal link target was not found: #{fragment}",
             )
         )
 
@@ -222,6 +299,8 @@ def _analyse_document(
             node.get("t") in {"BulletList", "OrderedList"} for node in nodes
         ),
         "raw_content_count": len(raw_formats),
+        "internal_link_count": len(internal_fragments),
+        "broken_internal_link_count": len(broken_internal_fragments),
     }
     return warnings, summary
 
@@ -324,6 +403,8 @@ def validate_manuscript(*, title: str, markdown: str) -> dict[str, object]:
                 "footnote_count": 0,
                 "list_count": 0,
                 "raw_content_count": 0,
+                "internal_link_count": 0,
+                "broken_internal_link_count": 0,
             },
             "contract_version": CONTRACT_VERSION,
         }
@@ -353,6 +434,8 @@ def validate_manuscript(*, title: str, markdown: str) -> dict[str, object]:
             "footnote_count": 0,
             "list_count": 0,
             "raw_content_count": 0,
+            "internal_link_count": 0,
+            "broken_internal_link_count": 0,
         }
     else:
         analysed_warnings, summary = _analyse_document(

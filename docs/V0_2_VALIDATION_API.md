@@ -59,11 +59,15 @@ A completed validation returns HTTP 200 whether the manuscript is valid or inval
     "table_count": 0,
     "footnote_count": 0,
     "list_count": 0,
-    "raw_content_count": 0
+    "raw_content_count": 0,
+    "internal_link_count": 0,
+    "broken_internal_link_count": 0
   },
   "contract_version": "0.2"
 }
 ```
+
+`internal_link_count` records every non-empty internal `#fragment` link occurrence. `broken_internal_link_count` records unresolved occurrences, including repeated references. One `broken-internal-link` warning is returned for each unique unresolved fragment, so the occurrence count may be greater than the warning count.
 
 Each finding contains:
 
@@ -77,12 +81,13 @@ Initial error codes include:
 - `empty-manuscript`;
 - `manuscript-parse-error`.
 
-Initial warning codes include:
+Warning codes include:
 
 - `no-headings`;
 - `starts-below-level-one`;
 - `heading-level-jump`;
 - `raw-format-content`;
+- `broken-internal-link`;
 - `title-metadata-missing`;
 - `language-metadata-missing`;
 - `pandoc-parser-warning`.
@@ -114,7 +119,8 @@ Validation:
 4. uses `markdown+yaml_metadata_block` and Pandoc's JSON AST;
 5. runs Pandoc in sandbox mode with a maximum of 30 seconds and never longer than the configured export-command timeout;
 6. distinguishes manuscript parse failure from tool, option, internal and resource failures;
-7. derives a bounded structural summary and stable findings.
+7. derives a bounded structural summary and stable findings;
+8. resolves internal fragment links only against Pandoc Header, Div and Span identifiers and does not fetch or verify external URLs.
 
 The endpoint does not create a job directory, lock, status record, history event, output, manifest or persistent manuscript copy. The existing request-body middleware applies before authentication parsing and validation execution.
 

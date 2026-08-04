@@ -81,6 +81,8 @@ class ValidationSummaryResponse(BaseModel):
     footnote_count: int
     list_count: int
     raw_content_count: int
+    internal_link_count: int = Field(ge=0)
+    broken_internal_link_count: int = Field(ge=0)
 
 
 class BookValidateResponse(BaseModel):

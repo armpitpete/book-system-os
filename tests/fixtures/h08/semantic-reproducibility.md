@@ -1,4 +1,5 @@
 ---
+# Writer-generated volatile package metadata is normalised only by the test.
 title: "H-08 Semantic Reproducibility"
 author:
   - "Book System OS"

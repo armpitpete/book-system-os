@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.auth import api_key_required
-from app.api.revision_ui import router as revision_ui_router
+from app.api.revision_ui_router import router as revision_ui_router
 from app.api.revisions import router as revisions_router
 from app.api.ui import router as dashboard_router
 from app.services.job_queue import create_job, get_job, read_status

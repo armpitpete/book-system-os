@@ -133,7 +133,16 @@ def build_revision_package(
     root: Path | None = None,
 ) -> RevisionPackage:
     storage_root = root or revision_root()
-    current = get_current(document_id, root=storage_root)
+    try:
+        current = get_current(document_id, root=storage_root)
+    except RevisionStudioError as exc:
+        if isinstance(exc, RevisionPackageError):
+            raise
+        raise RevisionPackageError(
+            str(exc),
+            code=exc.code,
+            status_code=exc.status_code,
+        ) from exc
     document_dir = storage_root / str(current["document_id"])
 
     files: dict[str, bytes] = {}

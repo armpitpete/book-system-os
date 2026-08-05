@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from app.api.revision_ui import EXTRA_STYLE, _error_page, _href, _safe, router
 from app.api.ui import page
+from app.services.revision_package import build_revision_package
 from app.services.revision_studio import RevisionStudioError, get_current, get_history
 
 # Keep the visual surface assembled in one exported router while replacing the
@@ -62,8 +63,37 @@ def revision_history(document_id: str) -> HTMLResponse:
         <div class="revision-nav">
           <a class="button secondary" href="/revisions/{_href(document_id)}">Document</a>
           <a class="button secondary" href="/revisions">All documents</a>
+          <a class="button" href="/revisions/{_href(document_id)}/package">Download portable package</a>
         </div>
-        <div class="card"><h1>History · {_safe(current['title'])}</h1></div>
+        <div class="card">
+          <h1>History · {_safe(current['title'])}</h1>
+          <p>The portable package contains Current, every retained proposal, decisions, History and a verification manifest.</p>
+        </div>
         {content}
         """,
+    )
+
+
+@router.get(
+    "/revisions/{document_id}/package",
+    include_in_schema=False,
+    response_model=None,
+)
+def revision_package_download(document_id: str) -> Response:
+    try:
+        package = build_revision_package(document_id)
+    except RevisionStudioError as exc:
+        return _error_page(
+            "Could not build portable package",
+            exc,
+            f"/revisions/{_href(document_id)}/history",
+        )
+    return Response(
+        content=package.content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{package.filename}"',
+            "X-Content-SHA256": package.sha256,
+            "X-Revision-Package-Version": "0.1",
+        },
     )

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.auth import api_key_required
+from app.api.revisions import router as revisions_router
 from app.api.ui import router as dashboard_router
 from app.services.job_queue import create_job, get_job, read_status
 from app.services.manuscript_validation import (
@@ -16,6 +17,7 @@ from app.services.manuscript_validation import (
 from app.services.publish_plan import build_publish_dry_run
 from app.services.readiness_guard import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
+from app.services.revision_studio import RevisionStudioError
 from app.services.security import SecurityMiddleware
 from app.version import APP_VERSION
 
@@ -26,6 +28,7 @@ app = FastAPI(title="Book System OS", version=APP_VERSION)
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(dashboard_router)
+app.include_router(revisions_router)
 
 
 @app.exception_handler(ResourceLimitError)
@@ -40,6 +43,14 @@ async def resource_limit_error(
 async def validation_service_error(
     _request: Request,
     exc: ValidationServiceError,
+) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.payload())
+
+
+@app.exception_handler(RevisionStudioError)
+async def revision_studio_error(
+    _request: Request,
+    exc: RevisionStudioError,
 ) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=exc.payload())
 
@@ -130,7 +141,7 @@ def api_v1_status() -> dict:
         "gateway": "publish.toiletrage.co.uk",
         "service": "book-system-os",
         "version": APP_VERSION,
-        "routes_enabled": ["book-system"],
+        "routes_enabled": ["book-system", "revision-studio"],
         "write_enabled": True,
         "implemented": [
             "GET /health",
@@ -140,12 +151,21 @@ def api_v1_status() -> dict:
             "POST /api/v1/publish/dry-run",
             "POST /api/submit",
             "GET /api/jobs/{job_id}",
+            "POST /api/v1/revisions/documents",
+            "GET /api/v1/revisions/documents/{document_id}",
+            "POST /api/v1/revisions/documents/{document_id}/proposals",
+            "GET /api/v1/revisions/documents/{document_id}/proposals",
+            "GET /api/v1/revisions/documents/{document_id}/proposals/{proposal_id}",
+            "GET /api/v1/revisions/documents/{document_id}/proposals/{proposal_id}/compare",
+            "POST /api/v1/revisions/documents/{document_id}/proposals/{proposal_id}/decision",
+            "GET /api/v1/revisions/documents/{document_id}/history",
         ],
         "not_yet_implemented": [
             "POST /api/v1/publish",
             "GET /api/v1/publish/{publish_id}",
             "GET /api/v1/publishes",
             "POST /api/v1/publish/{publish_id}/retry",
+            "Revision Studio visual interface",
         ],
     }
 

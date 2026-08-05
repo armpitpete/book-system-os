@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.api.auth import dashboard_auth
 from app.api.ui import page, post_form
@@ -57,7 +57,6 @@ def _href(value: str) -> str:
 
 
 def _state_badge(state: str) -> str:
-    safe = _safe(state)
     css_class = state if state in {
         "proposed",
         "accepted",
@@ -65,7 +64,10 @@ def _state_badge(state: str) -> str:
         "kept_for_later",
         "rejected",
     } else ""
-    return f'<span class="revision-state {css_class}">{safe.replace("_", " ")}</span>'
+    return (
+        f'<span class="revision-state {css_class}">'
+        f'{_safe(state).replace("_", " ")}</span>'
+    )
 
 
 def _lines(value: str) -> tuple[str, ...]:
@@ -186,14 +188,14 @@ def revision_new_document() -> HTMLResponse:
     )
 
 
-@router.post("/revisions", include_in_schema=False)
+@router.post("/revisions", include_in_schema=False, response_model=None)
 def revision_create_document(
     document_id: str = Form(...),
     title: str = Form(...),
     content: str = Form(...),
     actor: str = Form(...),
     authority_ref: str = Form(...),
-) -> HTMLResponse | RedirectResponse:
+) -> Response:
     try:
         created = create_document(
             document_id=document_id,
@@ -277,7 +279,11 @@ def revision_document(document_id: str) -> HTMLResponse:
     )
 
 
-@router.post("/revisions/{document_id}/proposals", include_in_schema=False)
+@router.post(
+    "/revisions/{document_id}/proposals",
+    include_in_schema=False,
+    response_model=None,
+)
 def revision_create_proposal(
     document_id: str,
     content: str = Form(...),
@@ -288,7 +294,7 @@ def revision_create_proposal(
     validation_refs: str = Form(""),
     consequence_notes: str = Form(""),
     risk_notes: str = Form(""),
-) -> HTMLResponse | RedirectResponse:
+) -> Response:
     try:
         proposal = create_proposal(
             document_id=document_id,
@@ -436,6 +442,7 @@ def revision_compare(document_id: str, proposal_id: str) -> HTMLResponse:
 @router.post(
     "/revisions/{document_id}/proposals/{proposal_id}/decision",
     include_in_schema=False,
+    response_model=None,
 )
 def revision_decision(
     document_id: str,
@@ -446,7 +453,7 @@ def revision_decision(
     accepted_units: list[str] | None = Form(default=None),
     merged_content: str | None = Form(default=None),
     note: str | None = Form(default=None),
-) -> HTMLResponse | RedirectResponse:
+) -> Response:
     try:
         decide_proposal(
             document_id=document_id,

@@ -227,13 +227,13 @@ def test_partial_acceptance_requires_and_records_actual_merged_manuscript(
 
     decision = client.post(
         f"/revisions/chapter-07/proposals/{proposal_id}/decision",
-        data=[
-            ("action", "accept_part"),
-            ("actor", "Merrin"),
-            ("authority_ref", "test:accept-part"),
-            ("accepted_units", proposal["changed_units"][0]),
-            ("merged_content", PARTIAL),
-        ],
+        data={
+            "action": "accept_part",
+            "actor": "Merrin",
+            "authority_ref": "test:accept-part",
+            "accepted_units": [proposal["changed_units"][0]],
+            "merged_content": PARTIAL,
+        },
         follow_redirects=False,
     )
     assert decision.status_code == 303, decision.text

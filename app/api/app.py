@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.auth import api_key_required
+from app.api.revision_packages import router as revision_packages_router
 from app.api.revision_ui_router import router as revision_ui_router
 from app.api.revisions import router as revisions_router
 from app.api.ui import router as dashboard_router
@@ -31,6 +32,7 @@ app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(dashboard_router)
 app.include_router(revision_ui_router)
 app.include_router(revisions_router)
+app.include_router(revision_packages_router)
 
 
 @app.exception_handler(ResourceLimitError)
@@ -157,6 +159,7 @@ def api_v1_status() -> dict:
             "GET /revisions/{document_id}",
             "GET /revisions/{document_id}/proposals/{proposal_id}",
             "GET /revisions/{document_id}/history",
+            "GET /revisions/{document_id}/package",
             "POST /api/v1/revisions/documents",
             "GET /api/v1/revisions/documents/{document_id}",
             "POST /api/v1/revisions/documents/{document_id}/proposals",
@@ -165,6 +168,8 @@ def api_v1_status() -> dict:
             "GET /api/v1/revisions/documents/{document_id}/proposals/{proposal_id}/compare",
             "POST /api/v1/revisions/documents/{document_id}/proposals/{proposal_id}/decision",
             "GET /api/v1/revisions/documents/{document_id}/history",
+            "GET /api/v1/revisions/documents/{document_id}/package",
+            "POST /api/v1/revisions/package/verify",
         ],
         "not_yet_implemented": [
             "POST /api/v1/publish",

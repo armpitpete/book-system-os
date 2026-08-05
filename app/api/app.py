@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.api.auth import api_key_required
+from app.api.revision_ui_router import router as revision_ui_router
 from app.api.revisions import router as revisions_router
 from app.api.ui import router as dashboard_router
 from app.services.job_queue import create_job, get_job, read_status
@@ -28,6 +29,7 @@ app = FastAPI(title="Book System OS", version=APP_VERSION)
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(dashboard_router)
+app.include_router(revision_ui_router)
 app.include_router(revisions_router)
 
 
@@ -151,6 +153,10 @@ def api_v1_status() -> dict:
             "POST /api/v1/publish/dry-run",
             "POST /api/submit",
             "GET /api/jobs/{job_id}",
+            "GET /revisions",
+            "GET /revisions/{document_id}",
+            "GET /revisions/{document_id}/proposals/{proposal_id}",
+            "GET /revisions/{document_id}/history",
             "POST /api/v1/revisions/documents",
             "GET /api/v1/revisions/documents/{document_id}",
             "POST /api/v1/revisions/documents/{document_id}/proposals",
@@ -165,7 +171,6 @@ def api_v1_status() -> dict:
             "GET /api/v1/publish/{publish_id}",
             "GET /api/v1/publishes",
             "POST /api/v1/publish/{publish_id}/retry",
-            "Revision Studio visual interface",
         ],
     }
 

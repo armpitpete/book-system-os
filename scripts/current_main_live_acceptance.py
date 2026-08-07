@@ -58,6 +58,10 @@ def required(values: dict[str, str], key: str) -> str:
     return value
 
 
+def _normalised_headers(items: Any) -> dict[str, str]:
+    return {str(key).lower(): str(value) for key, value in items}
+
+
 def request(
     url: str,
     *,
@@ -66,9 +70,13 @@ def request(
     req = urllib.request.Request(url, headers=headers or {}, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=12) as response:
-            return response.status, response.read(), dict(response.headers.items())
+            return (
+                response.status,
+                response.read(),
+                _normalised_headers(response.headers.items()),
+            )
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read(), dict(exc.headers.items())
+        return exc.code, exc.read(), _normalised_headers(exc.headers.items())
     except OSError as exc:
         fail(f"request failed for {url}: {type(exc).__name__}")
 
@@ -169,7 +177,7 @@ def main() -> int:
     unauth_ui, _, unauth_ui_headers = request(f"{local}/revisions")
     if unauth_ui != 401:
         fail(f"unauthenticated Revision Studio UI returned HTTP {unauth_ui}, expected 401")
-    if "basic" not in unauth_ui_headers.get("WWW-Authenticate", "").lower():
+    if "basic" not in unauth_ui_headers.get("www-authenticate", "").lower():
         fail("Revision Studio UI 401 did not advertise Basic authentication")
     report["checks"]["revision-ui-auth-boundary"] = "pass"
 

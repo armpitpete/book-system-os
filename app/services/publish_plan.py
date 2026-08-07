@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.services.artifact_readiness import unevaluated_readiness_report
 from app.services.manuscript_validation import CONTRACT_VERSION, validate_manuscript
 from app.services.provenance import source_identity_text
 
@@ -64,4 +65,7 @@ def build_publish_dry_run(*, title: str, markdown: str) -> dict[str, object]:
         "rendering_attempted": False,
         "job_created": False,
         "contract_version": CONTRACT_VERSION,
+        "readiness": unevaluated_readiness_report(
+            "dry-run-structural-validation-only"
+        ),
     }

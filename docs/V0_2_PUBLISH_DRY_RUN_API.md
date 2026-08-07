@@ -12,6 +12,22 @@ b40ebf0d654877cb078bffb5fec6b18b856b95b9
 The route plans the existing deterministic four-format production output set. It
 does not create or run a publish job.
 
+## BOS-RDY-001 readiness boundary
+
+The `publishable` field in this API means only that the submitted manuscript
+passed the bounded v0.2 structural manuscript-validation contract. It is not a
+publication-ready, digital-publication-ready or print-ready claim.
+
+BOS-RDY-001 is the authoritative later publication/readiness contract:
+[`BOS_RDY_001_READINESS_CONTRACT.md`](BOS_RDY_001_READINESS_CONTRACT.md).
+
+A completed dry-run response includes an explicit `readiness` report with
+`contract: "BOS-RDY-001"`, `artifact_contract_version: "1"`, `evaluated: false`,
+every readiness state false, and reason `dry-run-structural-validation-only`.
+This prevents structural `publishable: true` from being mistaken for evidence
+that Story Validation, exact-artifact production validation or human acceptance
+has occurred.
+
 ## Endpoint
 
 ```text
@@ -99,7 +115,30 @@ non-publishable:
   "job_state": "production",
   "rendering_attempted": false,
   "job_created": false,
-  "contract_version": "0.2"
+  "contract_version": "0.2",
+  "readiness": {
+    "contract": "BOS-RDY-001",
+    "artifact_contract_version": "1",
+    "evaluated": false,
+    "states": {
+      "story-ready": {
+        "ready": false,
+        "reasons": ["dry-run-structural-validation-only"]
+      },
+      "production-valid": {
+        "ready": false,
+        "reasons": ["dry-run-structural-validation-only"]
+      },
+      "digital-publication-ready": {
+        "ready": false,
+        "reasons": ["dry-run-structural-validation-only"]
+      },
+      "print-ready": {
+        "ready": false,
+        "reasons": ["dry-run-structural-validation-only"]
+      }
+    }
+  }
 }
 ```
 
@@ -112,6 +151,11 @@ consumed by `pandoc_export`. The current output contract is:
 | `pdf_nd` | `book-nd.pdf` | `application/pdf` |
 | `epub` | `book.epub` | `application/epub+zip` |
 | `docx` | `book.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+
+The dry-run output list does not itself assign publication or print readiness.
+BOS-RDY-001 artifact contract v1 separately defines which output keys can be
+considered for `digital-publication-ready` and `print-ready` after real artifact
+production, validation and acceptance.
 
 ## Controlled non-200 responses
 
@@ -139,7 +183,8 @@ Dry-run validation:
 1. applies the existing request body and manuscript byte limits;
 2. calls the existing manuscript validation service;
 3. computes `source_bytes` and `source_sha256` from the submitted UTF-8 content;
-4. returns the authoritative four-output plan.
+4. returns the authoritative four-output plan;
+5. explicitly reports that BOS-RDY-001 readiness was not evaluated.
 
 The route does not create a job directory, queue entry, lock, history record, log
 directory, output directory, manifest, retained manuscript copy, temporary
@@ -154,6 +199,10 @@ This endpoint does not:
 - create PDF, EPUB or DOCX output;
 - implement `/api/v1/publish`;
 - implement publish status, list or retry routes;
+- perform Story Validation;
+- perform BOS-RDY-001 exact-artifact production validation;
+- derive BOS-RDY-001 production-configuration or asset identities;
+- record or infer human acceptance;
 - add print-production, cover, spine, bleed, colour or imposition behaviour;
 - implement Semantic Architect behaviour;
 - authorise production deployment.

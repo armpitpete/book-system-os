@@ -33,6 +33,7 @@ FINAL_MANIFEST_STATUS_REQUIRED_AT = datetime(
 )
 LEGACY_MANIFEST_STEP = "pandoc-export"
 LEGACY_MANIFEST_MESSAGE = "Building PDF/EPUB/DOCX outputs"
+H07_SYNTHETIC_CLEANUP_FIXTURE_ID = "20260727-123343-2331e0af"
 
 
 class BackupValidationError(RuntimeError):
@@ -48,6 +49,7 @@ class ValidationSummary:
     legacy_jobs_without_events: int
     legacy_manifests_without_final_status: int
     legacy_manual_archived_state_transitions: int
+    historical_synthetic_fixtures_without_manifest: int
     restored_to: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -62,6 +64,9 @@ class ValidationSummary:
             ),
             "legacy_manual_archived_state_transitions": (
                 self.legacy_manual_archived_state_transitions
+            ),
+            "historical_synthetic_fixtures_without_manifest": (
+                self.historical_synthetic_fixtures_without_manifest
             ),
             "restored_to": self.restored_to,
         }
@@ -272,14 +277,13 @@ def _validate_manifest_outputs(
             )
 
 
-def _is_cleanup_archived_test_transition(
+def _has_evidential_cleanup_archive(
     *,
     status: dict[str, object],
-    embedded_state: str,
     events: list[dict[str, object]],
     job_id: str,
 ) -> bool:
-    if status.get("state") != "archived" or embedded_state != "test":
+    if status.get("state") != "archived":
         return False
 
     reason = status.get("archive_reason")
@@ -314,6 +318,37 @@ def _is_cleanup_archived_test_transition(
             return True
 
     return False
+
+
+def _is_cleanup_archived_test_transition(
+    *,
+    status: dict[str, object],
+    embedded_state: str,
+    events: list[dict[str, object]],
+    job_id: str,
+) -> bool:
+    return embedded_state == "test" and _has_evidential_cleanup_archive(
+        status=status,
+        events=events,
+        job_id=job_id,
+    )
+
+
+def _is_h07_synthetic_cleanup_fixture_without_manifest(
+    *,
+    status: dict[str, object],
+    events: list[dict[str, object]],
+    job_id: str,
+) -> bool:
+    if job_id != H07_SYNTHETIC_CLEANUP_FIXTURE_ID:
+        return False
+    if status.get("status") != "done":
+        return False
+    return _has_evidential_cleanup_archive(
+        status=status,
+        events=events,
+        job_id=job_id,
+    )
 
 
 def _is_legacy_manual_archived_test_transition(
@@ -486,7 +521,7 @@ def _validate_job(
     archive: tarfile.TarFile,
     members: dict[PurePosixPath, tarfile.TarInfo],
     job_id: str,
-) -> tuple[bool, bool, bool]:
+) -> tuple[bool, bool, bool, bool]:
     job_root = BACKUP_PREFIX / "books" / "jobs" / job_id
     _require_directory(members, job_root)
     for directory in REQUIRED_JOB_DIRECTORIES:
@@ -539,21 +574,29 @@ def _validate_job(
     manifest_member = members.get(manifest_path)
     legacy_manifest = False
     legacy_manual_transition = False
+    historical_synthetic_without_manifest = False
 
     if status.get("status") == "done":
-        manifest = _parse_json_object(
-            _read_required_file(archive, members, manifest_path),
-            f"{job_id}/manifest.json",
-        )
-        legacy_manifest, legacy_manual_transition = _validate_completed_manifest(
-            manifest,
-            metadata_created_at,
-            status,
-            events,
-            members,
-            job_root,
-            job_id,
-        )
+        if manifest_member is None and _is_h07_synthetic_cleanup_fixture_without_manifest(
+            status=status,
+            events=events,
+            job_id=job_id,
+        ):
+            historical_synthetic_without_manifest = True
+        else:
+            manifest = _parse_json_object(
+                _read_required_file(archive, members, manifest_path),
+                f"{job_id}/manifest.json",
+            )
+            legacy_manifest, legacy_manual_transition = _validate_completed_manifest(
+                manifest,
+                metadata_created_at,
+                status,
+                events,
+                members,
+                job_root,
+                job_id,
+            )
     elif manifest_member is not None:
         if not manifest_member.isfile():
             raise BackupValidationError(
@@ -564,7 +607,12 @@ def _validate_job(
             f"{job_id}/manifest.json",
         )
 
-    return legacy_without_events, legacy_manifest, legacy_manual_transition
+    return (
+        legacy_without_events,
+        legacy_manifest,
+        legacy_manual_transition,
+        historical_synthetic_without_manifest,
+    )
 
 
 def validate_archive(archive_path: Path) -> ValidationSummary:
@@ -636,13 +684,16 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
             _validate_job(archive, members, job_id) for job_id in jobs
         ]
         legacy_jobs_without_events = sum(
-            1 for events, _, _ in compatibility if events
+            1 for events, _, _, _ in compatibility if events
         )
         legacy_manifests_without_final_status = sum(
-            1 for _, manifest, _ in compatibility if manifest
+            1 for _, manifest, _, _ in compatibility if manifest
         )
         legacy_manual_archived_state_transitions = sum(
-            1 for _, _, transition in compatibility if transition
+            1 for _, _, transition, _ in compatibility if transition
+        )
+        historical_synthetic_fixtures_without_manifest = sum(
+            1 for _, _, _, fixture in compatibility if fixture
         )
 
     return ValidationSummary(
@@ -656,6 +707,9 @@ def validate_archive(archive_path: Path) -> ValidationSummary:
         ),
         legacy_manual_archived_state_transitions=(
             legacy_manual_archived_state_transitions
+        ),
+        historical_synthetic_fixtures_without_manifest=(
+            historical_synthetic_fixtures_without_manifest
         ),
     )
 
@@ -766,6 +820,9 @@ def restore_archive(
         ),
         legacy_manual_archived_state_transitions=(
             summary.legacy_manual_archived_state_transitions
+        ),
+        historical_synthetic_fixtures_without_manifest=(
+            summary.historical_synthetic_fixtures_without_manifest
         ),
         restored_to=str(destination),
     )

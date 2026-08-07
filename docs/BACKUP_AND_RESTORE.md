@@ -15,7 +15,7 @@ The backup archive contains:
 - `books/jobs/<job-id>/status.json` — lifecycle and classification state;
 - `books/jobs/<job-id>/work/` — intermediate material retained for diagnosis;
 - `books/jobs/<job-id>/output/` — the job's PDF, EPUB and DOCX outputs;
-- `books/jobs/<job-id>/manifest.json` — declared outputs and the status snapshot written by the pipeline version that built the job;
+- `books/jobs/<job-id>/manifest.json` — declared outputs and the status snapshot written by the pipeline version that built the job, when the source job has a publishing manifest;
 - `books/jobs/<job-id>/logs/` — per-job build and error logs;
 - `books/jobs/<job-id>/events.jsonl` — lifecycle and retry history when the source job has it;
 - repository-level `logs/`;
@@ -97,6 +97,30 @@ The summary reports accepted records as `legacy_manual_archived_state_transition
 
 Both accepted transition types are preservation rules only. Restore keeps the original status, manifest and event bytes without normalising or fabricating history.
 
+## Documented H-07 synthetic cleanup fixture compatibility
+
+The controlled H-07 dashboard production acceptance retained one deliberately synthetic lifecycle fixture:
+
+```text
+20260727-123343-2331e0af
+```
+
+Issue #40 records that exact identifier as `archived-cleanup-fixture`. The fixture was created to prove cleanup lifecycle behaviour rather than by the publishing pipeline, so it can legitimately have authoritative `status: done` and no `manifest.json`.
+
+This is an exact historical exception, not a general synthetic-job rule. A missing manifest is accepted only when all of the following are true:
+
+- the job identifier is exactly `20260727-123343-2331e0af`;
+- authoritative status is exactly `done` and state is exactly `archived`;
+- `archive_reason` exactly matches `Archived by cleanup helper; older than <positive integer> days`;
+- `archived_at` and `updated_at` are valid and equal;
+- `events.jsonl` is present, valid and contains a matching `archived` event with the same reason and age threshold;
+- that event is timestamped no earlier than `archived_at` and no more than one minute later;
+- `manifest.json` is absent.
+
+The validator reports this preserved exception as `historical_synthetic_fixtures_without_manifest`. Restore preserves every original fixture byte and preserves the absence of `manifest.json`; it never fabricates a publishing manifest.
+
+Any other modern `done` job without a manifest remains invalid, including a near-match identifier or the exact H-07 identifier without complete cleanup evidence.
+
 ## Consistency rule
 
 A trustworthy backup requires a quiescent job store. The utility refuses to continue when any job is `queued` or `running`, when a job `.lock` exists, when required status JSON is malformed, or when a symbolic link exists inside the copied data boundary.
@@ -160,13 +184,14 @@ Validation rejects:
 - modern jobs without required event history;
 - legacy jobs without a trustworthy pre-cutover creation timestamp;
 - job identifiers that disagree with `metadata.json`;
-- completed jobs without a manifest and non-empty declared outputs;
+- completed publishing jobs without a manifest and non-empty declared outputs, except the exact documented H-07 synthetic cleanup fixture above;
 - modern completed manifests without embedded final status `done`;
 - pre-cutover manifests that do not match the exact historical successful pipeline snapshot;
 - unexplained manifest/status state disagreement;
 - current archived Test jobs without exact cleanup fields and a matching archive event;
 - alleged legacy manual transitions outside the exact historical window or without exact retry evidence;
-- any production-to-archived manifest/status mismatch.
+- any production-to-archived manifest/status mismatch;
+- any near-match or under-evidenced attempt to use the H-07 synthetic-fixture exception.
 
 ## Clean-system restore rehearsal
 
@@ -210,6 +235,8 @@ For an accepted pre-cutover successful manifest, confirm that the source and res
 
 For an archived Test job, confirm that source and restored `status.json`, `manifest.json` and `events.jsonl` hashes are identical. The manifest should still record `test`; authoritative status should still record `archived`. Current cleanup records retain their cleanup evidence. Accepted legacy generic-setter records retain the deliberate absence of archive evidence and their exact retry history.
 
+For the documented H-07 synthetic cleanup fixture, confirm that `metadata.json`, `status.json`, `events.jsonl`, input and retained logs are byte-identical after restore and that `manifest.json` remains absent on both sides.
+
 Compare selected source and restored records without modifying either copy:
 
 ```bash
@@ -237,7 +264,7 @@ sha256sum \
 
 8. Start the API and worker.
 9. Check local and public health.
-10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy and archived records remain unchanged rather than being fabricated or normalised.
+10. Open representative completed jobs and confirm downloads, manifest state, logs and event history where present. Confirm accepted legacy, archived and documented synthetic records remain unchanged rather than being fabricated or normalised.
 
 Moving restored data into a production path is a protected production-data action. It must not be automated over an existing store.
 
@@ -266,6 +293,7 @@ For each controlled rehearsal, record without credentials:
 - count of accepted `legacy_jobs_without_events`;
 - count of accepted `legacy_manifests_without_final_status`;
 - count of accepted `legacy_manual_archived_state_transitions`;
+- count of accepted `historical_synthetic_fixtures_without_manifest`;
 - restore destination;
 - validation output;
 - source/restored hash comparison results;

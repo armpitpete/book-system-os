@@ -6,6 +6,8 @@ venv/
 
 books/jobs/*
 !books/jobs/.gitkeep
+books/revisions/*
+!books/revisions/.gitkeep
 books/cache/*
 !books/cache/.gitkeep
 books/outputs/*

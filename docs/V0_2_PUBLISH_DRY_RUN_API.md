@@ -22,10 +22,11 @@ BOS-RDY-001 is the authoritative later publication/readiness contract:
 [`BOS_RDY_001_READINESS_CONTRACT.md`](BOS_RDY_001_READINESS_CONTRACT.md).
 
 A completed dry-run response includes an explicit `readiness` report with
-`contract: "BOS-RDY-001"`, `evaluated: false`, every readiness state false, and
-reason `dry-run-structural-validation-only`. This prevents structural
-`publishable: true` from being mistaken for evidence that Story Validation,
-exact-artifact production validation or human acceptance has occurred.
+`contract: "BOS-RDY-001"`, `artifact_contract_version: "1"`, `evaluated: false`,
+every readiness state false, and reason `dry-run-structural-validation-only`.
+This prevents structural `publishable: true` from being mistaken for evidence
+that Story Validation, exact-artifact production validation or human acceptance
+has occurred.
 
 ## Endpoint
 
@@ -117,6 +118,7 @@ non-publishable:
   "contract_version": "0.2",
   "readiness": {
     "contract": "BOS-RDY-001",
+    "artifact_contract_version": "1",
     "evaluated": false,
     "states": {
       "story-ready": {
@@ -149,6 +151,11 @@ consumed by `pandoc_export`. The current output contract is:
 | `pdf_nd` | `book-nd.pdf` | `application/pdf` |
 | `epub` | `book.epub` | `application/epub+zip` |
 | `docx` | `book.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+
+The dry-run output list does not itself assign publication or print readiness.
+BOS-RDY-001 artifact contract v1 separately defines which output keys can be
+considered for `digital-publication-ready` and `print-ready` after real artifact
+production, validation and acceptance.
 
 ## Controlled non-200 responses
 
@@ -194,6 +201,7 @@ This endpoint does not:
 - implement publish status, list or retry routes;
 - perform Story Validation;
 - perform BOS-RDY-001 exact-artifact production validation;
+- derive BOS-RDY-001 production-configuration or asset identities;
 - record or infer human acceptance;
 - add print-production, cover, spine, bleed, colour or imposition behaviour;
 - implement Semantic Architect behaviour;

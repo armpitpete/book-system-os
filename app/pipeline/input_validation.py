@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import unquote, urlsplit
 
+from app.pipeline.image_holders import (
+    ImageHolderError,
+    holder_from_attributes,
+    validate_image_holder,
+)
 from app.services.resource_limits import export_command_timeout_seconds
 
 
@@ -28,24 +33,65 @@ def _walk_nodes(value: object) -> Iterator[dict[str, Any]]:
             yield from _walk_nodes(child)
 
 
-def _image_target(node: dict[str, Any]) -> str | None:
+def _inline_text(value: object) -> str:
+    def collect(node: object) -> str:
+        if isinstance(node, dict):
+            if node.get("t") == "Str" and isinstance(node.get("c"), str):
+                return node["c"]
+            if node.get("t") in {"Space", "SoftBreak", "LineBreak"}:
+                return " "
+            return "".join(collect(child) for child in node.values())
+        if isinstance(node, list):
+            return "".join(collect(child) for child in node)
+        return ""
+
+    return collect(value).strip()
+
+
+def _image_parts(node: dict[str, Any]) -> tuple[str, str, dict[str, str]] | None:
     if node.get("t") != "Image":
         return None
     content = node.get("c")
     if not isinstance(content, list) or len(content) < 3:
         return None
+
+    attr = content[0]
+    alt = content[1]
     target = content[2]
-    if not isinstance(target, list) or not target:
+    if (
+        not isinstance(target, list)
+        or not target
+        or not isinstance(target[0], str)
+        or not target[0]
+    ):
         return None
-    value = target[0]
-    return value if isinstance(value, str) and value else None
+
+    attributes: dict[str, str] = {}
+    if isinstance(attr, list) and len(attr) >= 3 and isinstance(attr[2], list):
+        for pair in attr[2]:
+            if (
+                isinstance(pair, list)
+                and len(pair) == 2
+                and isinstance(pair[0], str)
+                and isinstance(pair[1], str)
+            ):
+                attributes[pair[0]] = pair[1]
+
+    return target[0], _inline_text(alt), attributes
+
+
+def _image_target(node: dict[str, Any]) -> str | None:
+    """Return an image target while preserving the BOS-RDY-001 helper contract."""
+
+    parts = _image_parts(node)
+    return parts[0] if parts is not None else None
 
 
 def _parse_document(markdown: str) -> dict[str, Any]:
     command = [
         "pandoc",
         "--sandbox",
-        "--from=markdown+yaml_metadata_block",
+        "--from=markdown+yaml_metadata_block+link_attributes",
         "--to=json",
     ]
     try:
@@ -91,11 +137,16 @@ def _local_image_path(target: str, source_dir: Path) -> Path | None:
 
 
 def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
-    """Reject missing local Markdown image files before export.
+    """Reject invalid local Markdown images before export.
 
-    Pandoc's AST is used so inline and reference-style Markdown images share one
-    interpretation. Data images and HTTP(S) targets are outside this local-file
-    case and are not fetched.
+    Plain Markdown images retain the existing compatibility behaviour and are
+    checked for existence only. Images with a ``holder`` or ``image-holder``
+    attribute opt into the controlled-holder contract and must therefore resolve
+    to a local file that can receive deterministic geometry, format,
+    accessibility and print-resolution validation.
+
+    Data images and non-local URL targets without a holder are not fetched by
+    this validator.
     """
 
     if "![" not in markdown:
@@ -107,14 +158,38 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
         raise RuntimeError("Pandoc returned an invalid manuscript document")
 
     for node in _walk_nodes(blocks):
-        target = _image_target(node)
-        if target is None:
+        parts = _image_parts(node)
+        if parts is None:
             continue
+        target, alt_text, attributes = parts
+
+        try:
+            holder = holder_from_attributes(attributes)
+        except ImageHolderError as exc:
+            raise ManuscriptInputError(str(exc), code=exc.code) from exc
+
         path = _local_image_path(target, source_dir)
         if path is None:
+            if holder is not None:
+                raise ManuscriptInputError(
+                    f"Image holder '{holder.name}' requires a local image file: {target}",
+                    code="image-holder-requires-local-file",
+                )
             continue
         if not path.is_file():
             raise ManuscriptInputError(
                 f"Referenced local image file is missing: {target}",
                 code="missing-image-file",
             )
+
+        if holder is None:
+            continue
+        try:
+            validate_image_holder(
+                path,
+                holder=holder,
+                alt_text=alt_text,
+                attributes=attributes,
+            )
+        except ImageHolderError as exc:
+            raise ManuscriptInputError(str(exc), code=exc.code) from exc

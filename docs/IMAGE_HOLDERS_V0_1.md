@@ -28,20 +28,21 @@ Decorative ornament:
 
 ## Validation behaviour
 
-Before export, Book System OS checks holder-declared local images for:
+Before export, Book System OS checks holder-declared images for:
 
-- an existing local file;
+- an existing, inspectable local file;
 - a recognised holder name;
 - decodable JPEG, PNG or WebP content;
+- decompression-bomb limits;
 - alt text for non-decorative images;
 - required captions;
 - an aspect ratio that fits directly or stays within the holder's crop-loss limit;
 - enough source pixels for the holder's physical print width and minimum DPI;
 - `decorative=true` when the `ornament` holder is used.
 
-Images without a holder retain the previous compatibility behaviour and are checked only for existence. Existing manuscripts therefore do not become invalid merely because image-holder validation exists.
+Images without a holder retain the previous compatibility behaviour and are checked only for existence when they resolve locally. Existing manuscripts therefore do not become invalid merely because image-holder validation exists.
 
-Remote HTTP(S) and data-URI images are not fetched by the holder validator. BOS-RDY-001 retains its separate exact-asset rules for publication readiness.
+HTTP(S), data-URI and other non-local targets remain untouched when no holder is declared. An image that opts into a holder must resolve to a local file; otherwise validation fails with `image-holder-requires-local-file`, because BOS cannot honestly prove its dimensions, format or print suitability.
 
 ## Readiness binding
 

@@ -137,10 +137,12 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
 
     Plain Markdown images retain the existing compatibility behaviour and are
     checked for existence only. Images with a ``holder`` or ``image-holder``
-    attribute also receive deterministic geometry, format, accessibility and
-    print-resolution validation.
+    attribute opt into the controlled-holder contract and must therefore resolve
+    to a local file that can receive deterministic geometry, format,
+    accessibility and print-resolution validation.
 
-    Data images and non-local URL targets are not fetched by this validator.
+    Data images and non-local URL targets without a holder are not fetched by
+    this validator.
     """
 
     if "![" not in markdown:
@@ -156,8 +158,19 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
         if parts is None:
             continue
         target, alt_text, attributes = parts
+
+        try:
+            holder = holder_from_attributes(attributes)
+        except ImageHolderError as exc:
+            raise ManuscriptInputError(str(exc), code=exc.code) from exc
+
         path = _local_image_path(target, source_dir)
         if path is None:
+            if holder is not None:
+                raise ManuscriptInputError(
+                    f"Image holder '{holder.name}' requires a local image file: {target}",
+                    code="image-holder-requires-local-file",
+                )
             continue
         if not path.is_file():
             raise ManuscriptInputError(
@@ -165,14 +178,14 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
                 code="missing-image-file",
             )
 
+        if holder is None:
+            continue
         try:
-            holder = holder_from_attributes(attributes)
-            if holder is not None:
-                validate_image_holder(
-                    path,
-                    holder=holder,
-                    alt_text=alt_text,
-                    attributes=attributes,
-                )
+            validate_image_holder(
+                path,
+                holder=holder,
+                alt_text=alt_text,
+                attributes=attributes,
+            )
         except ImageHolderError as exc:
             raise ManuscriptInputError(str(exc), code=exc.code) from exc

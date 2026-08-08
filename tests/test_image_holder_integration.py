@@ -54,6 +54,28 @@ def test_unknown_holder_fails_through_manuscript_input(tmp_path: Path) -> None:
     assert exc.value.code == "unknown-image-holder"
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://example.invalid/feature.png",
+        "data:image/png;base64,AA==",
+    ],
+)
+def test_holder_requires_inspectable_local_image(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    require_pandoc()
+
+    with pytest.raises(ManuscriptInputError) as exc:
+        validate_local_image_files(
+            f'# Book\n\n![A feature]({target}){{holder=feature caption="Feature"}}\n',
+            source_dir=tmp_path,
+        )
+
+    assert exc.value.code == "image-holder-requires-local-file"
+
+
 def test_plain_existing_image_keeps_existence_only_compatibility(tmp_path: Path) -> None:
     require_pandoc()
     image = tmp_path / "legacy.png"

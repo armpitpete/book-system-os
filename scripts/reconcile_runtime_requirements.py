@@ -5,6 +5,7 @@ import hashlib
 import re
 import subprocess
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 from typing import Sequence
 
@@ -22,6 +23,7 @@ class RequirementReconciliationError(RuntimeError):
 class Requirement:
     raw: str
     identity: str
+    version: str
     has_extras: bool
 
 
@@ -80,7 +82,12 @@ def parse_requirements(path: Path) -> tuple[Requirement, ...]:
             )
         seen_identities.add(identity)
         requirements.append(
-            Requirement(raw=line, identity=identity, has_extras=extras is not None)
+            Requirement(
+                raw=line,
+                identity=identity,
+                version=match.group("version"),
+                has_extras=extras is not None,
+            )
         )
     if not requirements:
         raise RequirementReconciliationError("requirements file has no active requirements")
@@ -138,6 +145,21 @@ def _run_quiet(command: Sequence[str]) -> None:
         raise RequirementReconciliationError("runtime requirement command failed")
 
 
+def _additions_to_install(plan: ReconciliationPlan) -> tuple[Requirement, ...]:
+    missing: list[Requirement] = []
+    for requirement in plan.additions:
+        try:
+            installed_version = metadata.version(requirement.identity)
+        except metadata.PackageNotFoundError:
+            missing.append(requirement)
+            continue
+        if installed_version != requirement.version:
+            raise RequirementReconciliationError(
+                "candidate addition would replace an installed distribution"
+            )
+    return tuple(missing)
+
+
 def reconcile_runtime_requirements(
     *,
     current_path: Path,
@@ -148,7 +170,8 @@ def reconcile_runtime_requirements(
         raise RequirementReconciliationError("production virtualenv Python is unavailable")
 
     plan = plan_reconciliation(current_path, candidate_path)
-    if plan.additions:
+    to_install = _additions_to_install(plan)
+    if to_install:
         _run_quiet(
             [
                 str(python_bin),
@@ -158,7 +181,7 @@ def reconcile_runtime_requirements(
                 "--disable-pip-version-check",
                 "--no-input",
                 "--no-deps",
-                *(item.raw for item in plan.additions),
+                *(item.raw for item in to_install),
             ]
         )
     _run_quiet(
@@ -203,7 +226,7 @@ def main() -> int:
     print(f"candidate-requirements-sha256={plan.candidate_sha256}")
     print(f"requirements-policy={plan.policy}")
     print(f"requirements-additions={len(plan.additions)}")
-    print("requirements-install=pass" if plan.additions else "requirements-install=skipped")
+    print("requirements-environment=verified")
     print("pip-check=pass")
     return 0
 

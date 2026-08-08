@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import subprocess
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
 from typing import Sequence
@@ -28,11 +30,18 @@ class Requirement:
 
 
 @dataclass(frozen=True)
+class StagedWheel:
+    filename: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class ReconciliationPlan:
     current_sha256: str
     candidate_sha256: str
     policy: str
     additions: tuple[Requirement, ...]
+    staged_wheels: tuple[StagedWheel, ...] = ()
 
 
 def _sha256(path: Path) -> str:
@@ -128,7 +137,7 @@ def plan_reconciliation(current_path: Path, candidate_path: Path) -> Reconciliat
     )
 
 
-def _run_quiet(command: Sequence[str]) -> None:
+def _run_quiet(command: Sequence[str], *, failure_message: str) -> None:
     try:
         completed = subprocess.run(
             list(command),
@@ -139,10 +148,10 @@ def _run_quiet(command: Sequence[str]) -> None:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RequirementReconciliationError(
-            "runtime requirement command could not complete"
+            f"{failure_message}: command could not complete"
         ) from exc
     if completed.returncode != 0:
-        raise RequirementReconciliationError("runtime requirement command failed")
+        raise RequirementReconciliationError(failure_message)
 
 
 def _additions_to_install(plan: ReconciliationPlan) -> tuple[Requirement, ...]:
@@ -160,6 +169,60 @@ def _additions_to_install(plan: ReconciliationPlan) -> tuple[Requirement, ...]:
     return tuple(missing)
 
 
+def _stage_binary_wheels(
+    *,
+    python_bin: Path,
+    requirements: tuple[Requirement, ...],
+    stage_root: Path,
+) -> tuple[tuple[Path, ...], tuple[StagedWheel, ...]]:
+    wheel_paths: list[Path] = []
+    evidence: list[StagedWheel] = []
+
+    for requirement in requirements:
+        requirement_stage = stage_root / requirement.identity
+        requirement_stage.mkdir(mode=0o700)
+        _run_quiet(
+            [
+                str(python_bin),
+                "-m",
+                "pip",
+                "download",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--no-deps",
+                "--only-binary=:all:",
+                "--dest",
+                str(requirement_stage),
+                requirement.raw,
+            ],
+            failure_message="runtime requirement wheel download failed",
+        )
+        files = sorted(path for path in requirement_stage.iterdir() if path.is_file())
+        if len(files) != 1 or files[0].suffix.lower() != ".whl":
+            raise RequirementReconciliationError(
+                "runtime requirement did not resolve to exactly one binary wheel"
+            )
+        wheel = files[0]
+        wheel_paths.append(wheel)
+        evidence.append(StagedWheel(filename=wheel.name, sha256=_sha256(wheel)))
+
+    return tuple(wheel_paths), tuple(evidence)
+
+
+def _verify_additions_installed(requirements: tuple[Requirement, ...]) -> None:
+    for requirement in requirements:
+        try:
+            installed_version = metadata.version(requirement.identity)
+        except metadata.PackageNotFoundError as exc:
+            raise RequirementReconciliationError(
+                "installed additive requirement is unavailable after local wheel install"
+            ) from exc
+        if installed_version != requirement.version:
+            raise RequirementReconciliationError(
+                "installed additive requirement version does not match candidate"
+            )
+
+
 def reconcile_runtime_requirements(
     *,
     current_path: Path,
@@ -171,19 +234,35 @@ def reconcile_runtime_requirements(
 
     plan = plan_reconciliation(current_path, candidate_path)
     to_install = _additions_to_install(plan)
+    staged_wheels: tuple[StagedWheel, ...] = ()
+
     if to_install:
-        _run_quiet(
-            [
-                str(python_bin),
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-input",
-                "--no-deps",
-                *(item.raw for item in to_install),
-            ]
-        )
+        with tempfile.TemporaryDirectory(
+            prefix="book-system-runtime-wheels-",
+        ) as raw_stage_root:
+            stage_root = Path(raw_stage_root)
+            os.chmod(stage_root, 0o700)
+            wheel_paths, staged_wheels = _stage_binary_wheels(
+                python_bin=python_bin,
+                requirements=to_install,
+                stage_root=stage_root,
+            )
+            _run_quiet(
+                [
+                    str(python_bin),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-input",
+                    "--no-index",
+                    "--no-deps",
+                    *(str(path) for path in wheel_paths),
+                ],
+                failure_message="runtime requirement local wheel install failed",
+            )
+            _verify_additions_installed(to_install)
+
     _run_quiet(
         [
             str(python_bin),
@@ -191,9 +270,10 @@ def reconcile_runtime_requirements(
             "pip",
             "check",
             "--disable-pip-version-check",
-        ]
+        ],
+        failure_message="runtime requirement pip check failed",
     )
-    return plan
+    return replace(plan, staged_wheels=staged_wheels)
 
 
 def parse_args() -> argparse.Namespace:
@@ -226,6 +306,9 @@ def main() -> int:
     print(f"candidate-requirements-sha256={plan.candidate_sha256}")
     print(f"requirements-policy={plan.policy}")
     print(f"requirements-additions={len(plan.additions)}")
+    print(f"staged-wheel-count={len(plan.staged_wheels)}")
+    for wheel in plan.staged_wheels:
+        print(f"staged-wheel={wheel.filename} sha256={wheel.sha256}")
     print("requirements-environment=verified")
     print("pip-check=pass")
     return 0

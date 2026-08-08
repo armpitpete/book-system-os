@@ -142,21 +142,26 @@ def _run_quiet(
     command: Sequence[str],
     *,
     failure_message: str,
-    umask: int = -1,
+    child_umask: int | None = None,
 ) -> None:
+    previous_umask: int | None = None
     try:
+        if child_umask is not None:
+            previous_umask = os.umask(child_umask)
         completed = subprocess.run(
             list(command),
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=300,
-            umask=umask,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RequirementReconciliationError(
             f"{failure_message}: command could not complete"
         ) from exc
+    finally:
+        if previous_umask is not None:
+            os.umask(previous_umask)
     if completed.returncode != 0:
         raise RequirementReconciliationError(failure_message)
 
@@ -334,7 +339,7 @@ def reconcile_runtime_requirements(
                 # The release wrapper intentionally uses umask 077 for private
                 # evidence. Runtime packages live in a shared service venv and
                 # must retain normal service-readable 0644/0755-style modes.
-                umask=0o022,
+                child_umask=0o022,
             )
             _verify_additions_installed(to_install)
             _verify_service_readable_additions(to_install)

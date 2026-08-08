@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import os
 import re
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass, replace
@@ -137,7 +138,12 @@ def plan_reconciliation(current_path: Path, candidate_path: Path) -> Reconciliat
     )
 
 
-def _run_quiet(command: Sequence[str], *, failure_message: str) -> None:
+def _run_quiet(
+    command: Sequence[str],
+    *,
+    failure_message: str,
+    umask: int = -1,
+) -> None:
     try:
         completed = subprocess.run(
             list(command),
@@ -145,6 +151,7 @@ def _run_quiet(command: Sequence[str], *, failure_message: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=300,
+            umask=umask,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RequirementReconciliationError(
@@ -223,6 +230,70 @@ def _verify_additions_installed(requirements: tuple[Requirement, ...]) -> None:
             )
 
 
+def _verify_service_readable_additions(
+    requirements: tuple[Requirement, ...],
+) -> None:
+    for requirement in requirements:
+        try:
+            distribution = metadata.distribution(requirement.identity)
+        except metadata.PackageNotFoundError as exc:
+            raise RequirementReconciliationError(
+                "installed additive requirement is unavailable for permission verification"
+            ) from exc
+
+        files = distribution.files
+        if not files:
+            raise RequirementReconciliationError(
+                "installed additive requirement has no file manifest for permission verification"
+            )
+
+        site_root = Path(distribution.locate_file("")).resolve()
+        site_mode = stat.S_IMODE(site_root.stat().st_mode)
+        if not site_mode & stat.S_IXOTH:
+            raise RequirementReconciliationError(
+                "production site-packages is not service-traversable"
+            )
+
+        checked_directories: set[Path] = set()
+        checked_files = 0
+        for relative_path in files:
+            installed_path = Path(distribution.locate_file(relative_path))
+            try:
+                resolved = installed_path.resolve(strict=True)
+            except OSError as exc:
+                raise RequirementReconciliationError(
+                    "installed additive requirement contains an unavailable file"
+                ) from exc
+
+            if not resolved.is_relative_to(site_root):
+                continue
+            if not resolved.is_file():
+                continue
+
+            checked_files += 1
+            file_mode = stat.S_IMODE(resolved.stat().st_mode)
+            if not file_mode & stat.S_IROTH:
+                raise RequirementReconciliationError(
+                    "installed additive requirement contains a service-unreadable file"
+                )
+
+            directory = resolved.parent
+            while directory != site_root:
+                if directory not in checked_directories:
+                    directory_mode = stat.S_IMODE(directory.stat().st_mode)
+                    if not directory_mode & stat.S_IXOTH:
+                        raise RequirementReconciliationError(
+                            "installed additive requirement contains a service-untraversable directory"
+                        )
+                    checked_directories.add(directory)
+                directory = directory.parent
+
+        if checked_files == 0:
+            raise RequirementReconciliationError(
+                "installed additive requirement has no site-packages files to verify"
+            )
+
+
 def reconcile_runtime_requirements(
     *,
     current_path: Path,
@@ -260,8 +331,13 @@ def reconcile_runtime_requirements(
                     *(str(path) for path in wheel_paths),
                 ],
                 failure_message="runtime requirement local wheel install failed",
+                # The release wrapper intentionally uses umask 077 for private
+                # evidence. Runtime packages live in a shared service venv and
+                # must retain normal service-readable 0644/0755-style modes.
+                umask=0o022,
             )
             _verify_additions_installed(to_install)
+            _verify_service_readable_additions(to_install)
 
     _run_quiet(
         [
@@ -312,6 +388,7 @@ def main() -> int:
     for wheel in plan.staged_wheels:
         print(f"staged-wheel={wheel.filename} sha256={wheel.sha256}")
     print("requirements-environment=verified")
+    print("requirements-service-readability=verified")
     print("pip-check=pass")
     return 0
 

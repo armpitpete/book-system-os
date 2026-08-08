@@ -295,7 +295,9 @@ def main() -> int:
         plan = reconcile_runtime_requirements(
             current_path=args.current.resolve(),
             candidate_path=args.candidate.resolve(),
-            python_bin=args.python_bin.resolve(),
+            # Preserve the venv entrypoint path. Resolving this symlink can escape
+            # the virtualenv and make pip mutate the underlying system interpreter.
+            python_bin=args.python_bin.absolute(),
         )
     except RequirementReconciliationError as exc:
         print(f"runtime-requirements=fail: {exc}")

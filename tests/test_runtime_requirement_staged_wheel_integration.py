@@ -45,17 +45,60 @@ def _build_fixture_wheel(directory: Path) -> Path:
     return wheel
 
 
-def test_staged_wheel_reconciliation_runs_end_to_end_without_network(
+def _distribution_version(python_bin: Path) -> str:
+    completed = subprocess.run(
+        [
+            str(python_bin),
+            "-c",
+            (
+                "from importlib import metadata; "
+                "\ntry:\n"
+                f"    print(metadata.version('{PACKAGE_NAME}'))\n"
+                "except metadata.PackageNotFoundError:\n"
+                "    print('NOT-INSTALLED')\n"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return completed.stdout.strip()
+
+
+def test_staged_wheel_reconciliation_preserves_symlinked_venv_python(
     tmp_path: Path,
 ) -> None:
     wheelhouse = tmp_path / "wheelhouse"
     wheel = _build_fixture_wheel(wheelhouse)
     expected_digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
 
+    base_runtime = tmp_path / "base-runtime"
+    venv.EnvBuilder(with_pip=True, clear=True, symlinks=False).create(base_runtime)
+    base_python = base_runtime / "bin" / "python"
+    assert base_python.is_file()
+    assert not base_python.is_symlink()
+
     runtime = tmp_path / "runtime"
-    venv.EnvBuilder(with_pip=True, clear=True).create(runtime)
+    venv.EnvBuilder(with_pip=True, clear=True, symlinks=False).create(runtime)
     python_bin = runtime / "bin" / "python"
     assert python_bin.is_file()
+    python_bin.unlink()
+    python_bin.symlink_to(base_python)
+
+    assert python_bin.is_symlink()
+    assert python_bin.resolve() == base_python.resolve()
+
+    prefix = subprocess.run(
+        [str(python_bin), "-c", "import sys; print(sys.prefix)"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert prefix.returncode == 0
+    assert Path(prefix.stdout.strip()) == runtime
 
     current = tmp_path / "current.txt"
     candidate = tmp_path / "candidate.txt"
@@ -98,19 +141,5 @@ def test_staged_wheel_reconciliation_runs_end_to_end_without_network(
     assert f"staged-wheel={WHEEL_NAME} sha256={expected_digest}" in completed.stdout
     assert "pip-check=pass" in completed.stdout
 
-    verified = subprocess.run(
-        [
-            str(python_bin),
-            "-c",
-            (
-                "from importlib import metadata; "
-                f"print(metadata.version('{PACKAGE_NAME}'))"
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert verified.returncode == 0
-    assert verified.stdout.strip() == PACKAGE_VERSION
+    assert _distribution_version(python_bin) == PACKAGE_VERSION
+    assert _distribution_version(base_python) == "NOT-INSTALLED"

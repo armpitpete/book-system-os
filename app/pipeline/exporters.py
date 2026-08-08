@@ -10,7 +10,7 @@ from app.services.resource_limits import (
     enforce_job_storage_limits,
     export_command_timeout_seconds,
 )
-from app.utils.paths import templates_dir
+from app.utils.paths import filters_dir, templates_dir
 
 
 class ExportTimeoutError(RuntimeError):
@@ -102,21 +102,43 @@ def _run_export_command(
     enforce_job_storage_limits(job_dir)
 
 
+def _resource_path(markdown_file: Path, resource_dir: Path | None) -> str:
+    roots: list[Path] = []
+    for candidate in (resource_dir, markdown_file.parent):
+        if candidate is None:
+            continue
+        resolved = candidate.resolve(strict=False)
+        if resolved not in roots:
+            roots.append(resolved)
+    return os.pathsep.join(str(path) for path in roots)
+
+
 def _pandoc_command(
     markdown_file: Path,
     output: PublishOutputSpec,
+    *,
+    resource_dir: Path | None = None,
 ) -> list[str]:
+    holder_filter = filters_dir() / "image_holder_render.lua"
+    if not holder_filter.is_file():
+        raise RuntimeError(f"Image-holder rendering filter is unavailable: {holder_filter}")
+
     cmd = [
         "pandoc",
         str(markdown_file),
-        "--from=markdown+yaml_metadata_block",
+        "--from=markdown+yaml_metadata_block+link_attributes",
         "--toc",
-        "-o",
-        output.filename,
+        f"--lua-filter={holder_filter}",
+        f"--resource-path={_resource_path(markdown_file, resource_dir)}",
     ]
+
     if output.key in {"pdf_standard", "pdf_nd"}:
-        cmd.insert(3, "--top-level-division=chapter")
-        cmd.insert(4, "--pdf-engine=xelatex")
+        cmd.extend(
+            [
+                "--top-level-division=chapter",
+                "--pdf-engine=xelatex",
+            ]
+        )
 
         template_name = {
             "pdf_standard": "book-template-standard.tex",
@@ -124,18 +146,30 @@ def _pandoc_command(
         }[output.key]
         template = templates_dir() / template_name
         if template.exists():
-            cmd.insert(2, f"--template={template}")
+            cmd.append(f"--template={template}")
+
+    cmd.extend(["-o", output.filename])
     return cmd
 
 
-def pandoc_export(markdown_file: Path, output_dir: Path, log_file: Path) -> dict[str, str]:
+def pandoc_export(
+    markdown_file: Path,
+    output_dir: Path,
+    log_file: Path,
+    *,
+    resource_dir: Path | None = None,
+) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, str] = {}
     job_dir = output_dir.parent
 
     for output in PUBLISH_OUTPUTS:
         output_path = output_dir / output.filename
-        cmd = _pandoc_command(markdown_file, output)
+        cmd = _pandoc_command(
+            markdown_file,
+            output,
+            resource_dir=resource_dir,
+        )
         cmd[-1] = str(output_path)
         _run_export_command(cmd, job_dir=job_dir, log_file=log_file)
         outputs[output.key] = output_path.name

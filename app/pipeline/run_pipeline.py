@@ -143,7 +143,12 @@ def run_pipeline(job_dir: Path) -> int:
             step="pandoc-export",
             message="Building PDF/EPUB/DOCX outputs",
         )
-        outputs = pandoc_export(cleaned_file, output_dir, log_file)
+        outputs = pandoc_export(
+            cleaned_file,
+            output_dir,
+            log_file,
+            resource_dir=input_file.parent,
+        )
 
         enforce_job_storage_limits(
             job_dir,

@@ -140,6 +140,25 @@ def test_invalid_image_file_is_rejected(tmp_path: Path) -> None:
     assert exc.value.code == "invalid-image-file"
 
 
+def test_decompression_bomb_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "oversized.png"
+    make_image(image, (20, 20))
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+    with pytest.raises(ImageHolderError) as exc:
+        validate_image_holder(
+            image,
+            holder=HOLDERS["inline"],
+            alt_text="Oversized image",
+            attributes={},
+        )
+
+    assert exc.value.code == "image-too-large"
+
+
 def test_valid_feature_passes(tmp_path: Path) -> None:
     image = tmp_path / "feature.png"
     make_image(image, (2400, 1600))

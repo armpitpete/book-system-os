@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -93,11 +94,18 @@ def validate_image_holder(
         )
 
     try:
-        with Image.open(path) as image:
-            image.verify()
-        with Image.open(path) as image:
-            width, height = image.size
-            image_format = (image.format or "").upper()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path) as image:
+                image.verify()
+            with Image.open(path) as image:
+                width, height = image.size
+                image_format = (image.format or "").upper()
+    except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+        raise ImageHolderError(
+            f"Image exceeds safe pixel limits: {path.name}",
+            code="image-too-large",
+        ) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ImageHolderError(
             f"Image file cannot be decoded safely: {path.name}",

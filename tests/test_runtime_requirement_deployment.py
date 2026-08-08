@@ -9,6 +9,15 @@ from scripts import image_holder_live_acceptance as image_acceptance
 from scripts import reconcile_runtime_requirements as requirements
 
 
+PRODUCTION_REQUIREMENTS_BEFORE_IMAGE_HOLDERS = (
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "python-multipart==0.0.20",
+    "pydantic==2.10.4",
+    "jinja2==3.1.5",
+)
+
+
 def write_requirements(path: Path, *lines: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -19,6 +28,17 @@ def test_additive_requirement_plan_accepts_pillow(tmp_path: Path) -> None:
     write_requirements(current, "fastapi==0.115.6", "uvicorn[standard]==0.34.0")
     write_requirements(candidate, "fastapi==0.115.6", "uvicorn[standard]==0.34.0", "Pillow==12.3.0")
     plan = requirements.plan_reconciliation(current, candidate)
+    assert plan.policy == "additive"
+    assert [item.raw for item in plan.additions] == ["Pillow==12.3.0"]
+
+
+def test_exact_production_to_current_candidate_is_only_pillow(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    current = tmp_path / "production-requirements.txt"
+    write_requirements(current, *PRODUCTION_REQUIREMENTS_BEFORE_IMAGE_HOLDERS)
+
+    plan = requirements.plan_reconciliation(current, root / "requirements.txt")
+
     assert plan.policy == "additive"
     assert [item.raw for item in plan.additions] == ["Pillow==12.3.0"]
 

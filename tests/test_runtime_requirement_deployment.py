@@ -38,6 +38,7 @@ def test_unchanged_requirement_plan_is_allowed(tmp_path: Path) -> None:
     [
         (["fastapi==0.115.6"], ["fastapi==0.116.0"], "replace an existing direct requirement"),
         (["fastapi==0.115.6", "pydantic==2.10.4"], ["fastapi==0.115.6"], "remove an existing direct requirement"),
+        (["uvicorn[standard]==0.34.0"], ["uvicorn[other]==0.34.0"], "replace an existing direct requirement"),
     ],
 )
 def test_non_additive_requirement_changes_fail_closed(
@@ -76,6 +77,13 @@ def test_unsupported_requirement_syntax_fails_closed(tmp_path: Path, line: str) 
 def test_duplicate_requirement_identity_fails_closed(tmp_path: Path) -> None:
     path = tmp_path / "requirements.txt"
     write_requirements(path, "Pillow==12.3.0", "pillow==12.3.0")
+    with pytest.raises(requirements.RequirementReconciliationError, match="duplicate requirement identity"):
+        requirements.parse_requirements(path)
+
+
+def test_duplicate_requirement_with_different_extras_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "requirements.txt"
+    write_requirements(path, "uvicorn[standard]==0.34.0", "uvicorn[other]==0.34.0")
     with pytest.raises(requirements.RequirementReconciliationError, match="duplicate requirement identity"):
         requirements.parse_requirements(path)
 

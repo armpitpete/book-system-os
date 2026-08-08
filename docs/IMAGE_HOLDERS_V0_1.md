@@ -50,4 +50,6 @@ Holder syntax uses the same Pandoc image discovery path already consumed by BOS-
 
 ## Design boundary
 
-Image holders v0.1 are a controlled authoring and validation contract. They do **not** yet introduce free positioning, arbitrary dimensions, floating text, automatic layout/cropping, cover design, image sourcing or SVG upload. Export-specific frames, treatments and final placement remain template concerns.
+This section records the original **v0.1** boundary: image holders were initially a controlled authoring and validation contract only. They did **not** introduce free positioning, arbitrary dimensions, floating text, automatic layout/cropping, cover design, image sourcing or SVG upload.
+
+Holder-aware controlled rendering was added as the separate v0.2 contract. See `docs/IMAGE_HOLDERS_V0_2.md`. The prohibition on arbitrary positioning and the separate boundary for automatic raster cropping remain in force.

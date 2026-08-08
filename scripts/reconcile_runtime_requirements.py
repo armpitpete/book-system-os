@@ -22,6 +22,7 @@ class RequirementReconciliationError(RuntimeError):
 class Requirement:
     raw: str
     identity: str
+    has_extras: bool
 
 
 @dataclass(frozen=True)
@@ -71,13 +72,16 @@ def parse_requirements(path: Path) -> tuple[Requirement, ...]:
             raise RequirementReconciliationError(
                 f"requirement is not an exact simple pin at line {line_number}"
             )
-        identity = _normalise_identity(match.group("name"), match.group("extras"))
+        extras = match.group("extras")
+        identity = _normalise_identity(match.group("name"), extras)
         if identity in seen_identities:
             raise RequirementReconciliationError(
                 f"duplicate requirement identity at line {line_number}"
             )
         seen_identities.add(identity)
-        requirements.append(Requirement(raw=line, identity=identity))
+        requirements.append(
+            Requirement(raw=line, identity=identity, has_extras=extras is not None)
+        )
     if not requirements:
         raise RequirementReconciliationError("requirements file has no active requirements")
     return tuple(requirements)
@@ -105,6 +109,10 @@ def plan_reconciliation(current_path: Path, candidate_path: Path) -> Reconciliat
         for requirement in candidate
         if requirement.identity not in current_by_id
     )
+    if any(requirement.has_extras for requirement in additions):
+        raise RequirementReconciliationError(
+            "candidate additions with extras require a protected dependency migration"
+        )
     return ReconciliationPlan(
         current_sha256=_sha256(current_path),
         candidate_sha256=_sha256(candidate_path),

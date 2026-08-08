@@ -102,14 +102,25 @@ def _run_export_command(
     enforce_job_storage_limits(job_dir)
 
 
+def _default_resource_dir(markdown_file: Path) -> Path:
+    parent = markdown_file.parent.resolve(strict=False)
+    if parent.name == "work":
+        input_dir = parent.parent / "input"
+        if input_dir.is_dir():
+            return input_dir.resolve(strict=False)
+    return parent
+
+
 def _resource_path(markdown_file: Path, resource_dir: Path | None) -> str:
+    primary = (
+        resource_dir.resolve(strict=False)
+        if resource_dir is not None
+        else _default_resource_dir(markdown_file)
+    )
     roots: list[Path] = []
-    for candidate in (resource_dir, markdown_file.parent):
-        if candidate is None:
-            continue
-        resolved = candidate.resolve(strict=False)
-        if resolved not in roots:
-            roots.append(resolved)
+    for candidate in (primary, markdown_file.parent.resolve(strict=False)):
+        if candidate not in roots:
+            roots.append(candidate)
     return os.pathsep.join(str(path) for path in roots)
 
 

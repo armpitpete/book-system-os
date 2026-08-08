@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from importlib import metadata
 from pathlib import Path
 
 import pytest
@@ -107,7 +108,7 @@ def test_duplicate_requirement_with_different_extras_fails_closed(tmp_path: Path
         requirements.parse_requirements(path)
 
 
-def test_reconciliation_installs_only_additions_then_runs_pip_check(
+def test_reconciliation_installs_only_absent_additions_then_runs_pip_check(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -118,6 +119,9 @@ def test_reconciliation_installs_only_additions_then_runs_pip_check(
     write_requirements(current, "fastapi==0.115.6")
     write_requirements(candidate, "fastapi==0.115.6", "Pillow==12.3.0")
     commands: list[list[str]] = []
+
+    def not_installed(name: str) -> str:
+        raise metadata.PackageNotFoundError(name)
 
     def fake_run(
         command: list[str],
@@ -130,6 +134,7 @@ def test_reconciliation_installs_only_additions_then_runs_pip_check(
         commands.append(command)
         return subprocess.CompletedProcess(command, 0)
 
+    monkeypatch.setattr(requirements.metadata, "version", not_installed)
     monkeypatch.setattr(requirements.subprocess, "run", fake_run)
     plan = requirements.reconcile_runtime_requirements(
         current_path=current,
@@ -139,6 +144,54 @@ def test_reconciliation_installs_only_additions_then_runs_pip_check(
     assert plan.policy == "additive"
     assert commands[0][-2:] == ["--no-deps", "Pillow==12.3.0"]
     assert commands[1][-2:] == ["check", "--disable-pip-version-check"]
+
+
+def test_existing_same_version_addition_is_verified_without_install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current.txt"
+    candidate = tmp_path / "candidate.txt"
+    python_bin = tmp_path / "python"
+    python_bin.write_text("", encoding="utf-8")
+    write_requirements(current, "fastapi==0.115.6")
+    write_requirements(candidate, "fastapi==0.115.6", "Pillow==12.3.0")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(requirements.metadata, "version", lambda name: "12.3.0")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(requirements.subprocess, "run", fake_run)
+    requirements.reconcile_runtime_requirements(
+        current_path=current,
+        candidate_path=candidate,
+        python_bin=python_bin,
+    )
+    assert len(commands) == 1
+    assert commands[0][-2:] == ["check", "--disable-pip-version-check"]
+
+
+def test_existing_different_version_addition_requires_migration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current.txt"
+    candidate = tmp_path / "candidate.txt"
+    python_bin = tmp_path / "python"
+    python_bin.write_text("", encoding="utf-8")
+    write_requirements(current, "fastapi==0.115.6")
+    write_requirements(candidate, "fastapi==0.115.6", "Pillow==12.3.0")
+    monkeypatch.setattr(requirements.metadata, "version", lambda name: "11.0.0")
+
+    with pytest.raises(requirements.RequirementReconciliationError, match="replace an installed distribution"):
+        requirements.reconcile_runtime_requirements(
+            current_path=current,
+            candidate_path=candidate,
+            python_bin=python_bin,
+        )
 
 
 def test_requirement_install_failure_is_reported_without_command_output(
@@ -152,9 +205,13 @@ def test_requirement_install_failure_is_reported_without_command_output(
     write_requirements(current, "fastapi==0.115.6")
     write_requirements(candidate, "fastapi==0.115.6", "Pillow==12.3.0")
 
+    def not_installed(name: str) -> str:
+        raise metadata.PackageNotFoundError(name)
+
     def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(["pip"], 1)
 
+    monkeypatch.setattr(requirements.metadata, "version", not_installed)
     monkeypatch.setattr(requirements.subprocess, "run", fake_run)
     with pytest.raises(requirements.RequirementReconciliationError, match="runtime requirement command failed"):
         requirements.reconcile_runtime_requirements(

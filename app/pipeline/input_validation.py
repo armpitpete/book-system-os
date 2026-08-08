@@ -59,7 +59,12 @@ def _image_parts(node: dict[str, Any]) -> tuple[str, str, dict[str, str]] | None
     attr = content[0]
     alt = content[1]
     target = content[2]
-    if not isinstance(target, list) or not target or not isinstance(target[0], str):
+    if (
+        not isinstance(target, list)
+        or not target
+        or not isinstance(target[0], str)
+        or not target[0]
+    ):
         return None
 
     attributes: dict[str, str] = {}

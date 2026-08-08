@@ -30,6 +30,24 @@ def test_image_holder_alias_is_resolved() -> None:
     assert holder_from_attributes({"image-holder": "portrait"}) == HOLDERS["portrait"]
 
 
+def test_blank_holder_is_rejected() -> None:
+    with pytest.raises(ImageHolderError) as exc:
+        holder_from_attributes({"holder": "  "})
+    assert exc.value.code == "invalid-image-holder"
+
+
+def test_conflicting_holder_attributes_are_rejected() -> None:
+    with pytest.raises(ImageHolderError) as exc:
+        holder_from_attributes({"holder": "feature", "image-holder": "portrait"})
+    assert exc.value.code == "conflicting-image-holder"
+
+
+def test_matching_holder_aliases_are_allowed() -> None:
+    assert holder_from_attributes(
+        {"holder": "feature", "image-holder": " feature "}
+    ) == HOLDERS["feature"]
+
+
 def test_unknown_holder_is_rejected() -> None:
     with pytest.raises(ImageHolderError, match="Unknown image holder") as exc:
         holder_from_attributes({"holder": "floating-chaos"})

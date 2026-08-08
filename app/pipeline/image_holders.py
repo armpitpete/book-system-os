@@ -41,9 +41,25 @@ class ImageHolderError(RuntimeError):
 
 
 def holder_from_attributes(attributes: Mapping[str, str]) -> ImageHolder | None:
-    name = attributes.get("holder") or attributes.get("image-holder")
-    if not name:
+    has_primary = "holder" in attributes
+    has_alias = "image-holder" in attributes
+    if not has_primary and not has_alias:
         return None
+
+    primary = attributes.get("holder", "").strip() if has_primary else None
+    alias = attributes.get("image-holder", "").strip() if has_alias else None
+    if has_primary and has_alias and primary != alias:
+        raise ImageHolderError(
+            "Conflicting holder and image-holder attributes are not allowed.",
+            code="conflicting-image-holder",
+        )
+
+    name = primary if has_primary else alias
+    if not name:
+        raise ImageHolderError(
+            "Image holder name must not be empty.",
+            code="invalid-image-holder",
+        )
     try:
         return HOLDERS[name]
     except KeyError as exc:

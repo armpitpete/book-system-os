@@ -87,6 +87,13 @@ def test_plain_existing_image_keeps_existence_only_compatibility(tmp_path: Path)
     )
 
 
+def test_empty_image_target_preserves_none_compatibility() -> None:
+    node = {"t": "Image", "c": [["", [], []], [], ["", ""]]}
+
+    assert _image_parts(node) is None
+    assert _image_target(node) is None
+
+
 def test_image_target_helper_still_discovers_holder_image() -> None:
     require_pandoc()
     document = _parse_document(

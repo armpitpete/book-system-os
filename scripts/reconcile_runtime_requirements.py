@@ -42,12 +42,11 @@ def _sha256(path: Path) -> str:
 
 def _normalise_identity(name: str, extras: str | None) -> str:
     package = re.sub(r"[-_.]+", "-", name).lower()
-    if not extras:
-        return package
-    values = [item.strip().lower() for item in extras[1:-1].split(",")]
-    if not values or any(not item for item in values):
-        raise RequirementReconciliationError("requirement extras are malformed")
-    return package + "[" + ",".join(sorted(values)) + "]"
+    if extras:
+        values = [item.strip().lower() for item in extras[1:-1].split(",")]
+        if not values or any(not item for item in values):
+            raise RequirementReconciliationError("requirement extras are malformed")
+    return package
 
 
 def parse_requirements(path: Path) -> tuple[Requirement, ...]:

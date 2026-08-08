@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from app.pipeline import exporters
 from app.pipeline.exporters import _pandoc_command, pandoc_export
 from app.pipeline.input_validation import ManuscriptInputError, validate_local_image_files
 from app.services.publish_plan import PUBLISH_OUTPUTS
@@ -16,6 +18,7 @@ from app.services.publish_plan import PUBLISH_OUTPUTS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOLDER_FILTER = REPO_ROOT / "filters" / "image_holder_render.lua"
+HOLDER_FILTER_RELATIVE = "filters/image_holder_render.lua"
 
 
 def require_pandoc() -> None:
@@ -107,17 +110,52 @@ def test_all_publish_commands_use_holder_filter_and_infer_manuscript_resource_pa
     work_dir.mkdir()
     markdown = work_dir / "book-clean.md"
     markdown.write_text("# Book\n", encoding="utf-8")
+    expected_filter_digest = hashlib.sha256(HOLDER_FILTER.read_bytes()).hexdigest()
 
     for output in PUBLISH_OUTPUTS:
         command = _pandoc_command(markdown, output)
         assert "--from=markdown+yaml_metadata_block+link_attributes" in command
-        assert f"--lua-filter={HOLDER_FILTER}" in command
+        assert f"--lua-filter={HOLDER_FILTER_RELATIVE}" in command
+        assert (
+            f"--variable=book-system-holder-renderer-sha256={expected_filter_digest}"
+            in command
+        )
         resource_argument = next(
             value for value in command if value.startswith("--resource-path=")
         )
         roots = resource_argument.removeprefix("--resource-path=").split(os.pathsep)
         assert str(input_dir.resolve()) in roots
         assert str(work_dir.resolve()) in roots
+
+
+def test_readiness_placeholder_command_is_path_stable_and_filter_content_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_code_root = tmp_path / "code"
+    fake_filters = fake_code_root / "filters"
+    fake_filters.mkdir(parents=True)
+    fake_filter = fake_filters / "image_holder_render.lua"
+    fake_filter.write_text("-- renderer v1\n", encoding="utf-8")
+
+    monkeypatch.setattr(exporters, "code_root", lambda: fake_code_root)
+    monkeypatch.setattr(exporters, "filters_dir", lambda: fake_filters)
+
+    spec = next(output for output in PUBLISH_OUTPUTS if output.key == "epub")
+    first = exporters._pandoc_command(Path("__BOOK__.md"), spec)
+    assert f"--lua-filter={HOLDER_FILTER_RELATIVE}" in first
+    assert "--resource-path=." in first
+
+    fake_filter.write_text("-- renderer v2\n", encoding="utf-8")
+    second = exporters._pandoc_command(Path("__BOOK__.md"), spec)
+
+    first_digest = next(
+        value for value in first if value.startswith("--variable=book-system-holder-renderer-sha256=")
+    )
+    second_digest = next(
+        value for value in second if value.startswith("--variable=book-system-holder-renderer-sha256=")
+    )
+    assert first_digest != second_digest
 
 
 def test_caption_required_holder_must_be_standalone_figure(tmp_path: Path) -> None:
@@ -170,7 +208,8 @@ def test_pdf_holder_mapping_is_deterministic_latex(
     assert "width=1in" in latex, label
     assert "Feature visible caption." in latex, label
     assert "Full-page visible caption." in latex, label
-    assert "Portrait accessibility text" not in latex, label
+    assert "alt={Portrait accessibility text}" in latex, label
+    assert "\\caption{Portrait accessibility text}" not in latex, label
     assert latex.count("\\clearpage") >= 2, label
     assert "position: fixed" not in latex, label
 
@@ -236,6 +275,7 @@ def test_validated_relative_holders_render_in_all_four_outputs(
 
     build_log = log_file.read_text(encoding="utf-8", errors="replace")
     assert build_log.count("--lua-filter=") == 4
+    assert build_log.count("--variable=book-system-holder-renderer-sha256=") == 4
     assert build_log.count("--resource-path=") == 4
     assert "book-standard.pdf" in build_log
     assert "book-nd.pdf" in build_log

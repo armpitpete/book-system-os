@@ -34,19 +34,18 @@ def _walk_nodes(value: object) -> Iterator[dict[str, Any]]:
 
 
 def _inline_text(value: object) -> str:
-    parts: list[str] = []
-    if isinstance(value, dict):
-        if value.get("t") == "Str" and isinstance(value.get("c"), str):
-            parts.append(value["c"])
-        elif value.get("t") in {"Space", "SoftBreak", "LineBreak"}:
-            parts.append(" ")
-        else:
-            for child in value.values():
-                parts.append(_inline_text(child))
-    elif isinstance(value, list):
-        for child in value:
-            parts.append(_inline_text(child))
-    return "".join(parts).strip()
+    def collect(node: object) -> str:
+        if isinstance(node, dict):
+            if node.get("t") == "Str" and isinstance(node.get("c"), str):
+                return node["c"]
+            if node.get("t") in {"Space", "SoftBreak", "LineBreak"}:
+                return " "
+            return "".join(collect(child) for child in node.values())
+        if isinstance(node, list):
+            return "".join(collect(child) for child in node)
+        return ""
+
+    return collect(value).strip()
 
 
 def _image_parts(node: dict[str, Any]) -> tuple[str, str, dict[str, str]] | None:

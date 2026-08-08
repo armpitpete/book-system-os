@@ -22,15 +22,25 @@ class ManuscriptInputError(RuntimeError):
         self.code = code
 
 
-def _walk_nodes(value: object) -> Iterator[dict[str, Any]]:
+def _walk_nodes_with_ancestors(
+    value: object,
+    ancestors: tuple[str, ...] = (),
+) -> Iterator[tuple[dict[str, Any], tuple[str, ...]]]:
     if isinstance(value, dict):
-        if isinstance(value.get("t"), str):
-            yield value
+        tag = value.get("t") if isinstance(value.get("t"), str) else None
+        if tag is not None:
+            yield value, ancestors
+        child_ancestors = ancestors + ((tag,) if tag is not None else ())
         for child in value.values():
-            yield from _walk_nodes(child)
+            yield from _walk_nodes_with_ancestors(child, child_ancestors)
     elif isinstance(value, list):
         for child in value:
-            yield from _walk_nodes(child)
+            yield from _walk_nodes_with_ancestors(child, ancestors)
+
+
+def _walk_nodes(value: object) -> Iterator[dict[str, Any]]:
+    for node, _ancestors in _walk_nodes_with_ancestors(value):
+        yield node
 
 
 def _inline_text(value: object) -> str:
@@ -145,6 +155,9 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
     to a local file that can receive deterministic geometry, format,
     accessibility and print-resolution validation.
 
+    Caption-required holders must be represented by Pandoc as a Figure so the
+    renderer can keep the declared caption visibly associated with the image.
+
     Data images and non-local URL targets without a holder are not fetched by
     this validator.
     """
@@ -157,7 +170,7 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
     if not isinstance(blocks, list):
         raise RuntimeError("Pandoc returned an invalid manuscript document")
 
-    for node in _walk_nodes(blocks):
+    for node, ancestors in _walk_nodes_with_ancestors(blocks):
         parts = _image_parts(node)
         if parts is None:
             continue
@@ -167,6 +180,12 @@ def validate_local_image_files(markdown: str, *, source_dir: Path) -> None:
             holder = holder_from_attributes(attributes)
         except ImageHolderError as exc:
             raise ManuscriptInputError(str(exc), code=exc.code) from exc
+
+        if holder is not None and holder.caption_required and "Figure" not in ancestors:
+            raise ManuscriptInputError(
+                f"Image holder '{holder.name}' must be a standalone figure so its caption can be rendered.",
+                code="image-holder-requires-figure-context",
+            )
 
         path = _local_image_path(target, source_dir)
         if path is None:

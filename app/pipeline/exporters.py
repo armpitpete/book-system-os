@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import signal
 import subprocess
@@ -10,7 +11,7 @@ from app.services.resource_limits import (
     enforce_job_storage_limits,
     export_command_timeout_seconds,
 )
-from app.utils.paths import filters_dir, templates_dir
+from app.utils.paths import code_root, filters_dir, templates_dir
 
 
 class ExportTimeoutError(RuntimeError):
@@ -53,6 +54,7 @@ def run_command(
     log_file: Path,
     *,
     timeout_seconds: float | None = None,
+    cwd: Path | None = None,
 ) -> None:
     timeout = (
         export_command_timeout_seconds()
@@ -72,6 +74,8 @@ def run_command(
             "stderr": log,
             "text": True,
         }
+        if cwd is not None:
+            popen_kwargs["cwd"] = str(cwd)
         if os.name == "posix":
             popen_kwargs["start_new_session"] = True
 
@@ -98,13 +102,17 @@ def _run_export_command(
     job_dir: Path,
     log_file: Path,
 ) -> None:
-    run_command(cmd, log_file)
+    run_command(cmd, log_file, cwd=code_root())
     enforce_job_storage_limits(job_dir)
 
 
+def _normalised_resource_root(path: Path) -> Path:
+    return path.resolve(strict=False) if path.is_absolute() else path
+
+
 def _default_resource_dir(markdown_file: Path) -> Path:
-    parent = markdown_file.parent.resolve(strict=False)
-    if parent.name == "work":
+    parent = _normalised_resource_root(markdown_file.parent)
+    if parent.is_absolute() and parent.name == "work":
         input_dir = parent.parent / "input"
         if input_dir.is_dir():
             return input_dir.resolve(strict=False)
@@ -113,15 +121,23 @@ def _default_resource_dir(markdown_file: Path) -> Path:
 
 def _resource_path(markdown_file: Path, resource_dir: Path | None) -> str:
     primary = (
-        resource_dir.resolve(strict=False)
+        _normalised_resource_root(resource_dir)
         if resource_dir is not None
         else _default_resource_dir(markdown_file)
     )
     roots: list[Path] = []
-    for candidate in (primary, markdown_file.parent.resolve(strict=False)):
+    for candidate in (primary, _normalised_resource_root(markdown_file.parent)):
         if candidate not in roots:
             roots.append(candidate)
     return os.pathsep.join(str(path) for path in roots)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _pandoc_command(
@@ -134,12 +150,19 @@ def _pandoc_command(
     if not holder_filter.is_file():
         raise RuntimeError(f"Image-holder rendering filter is unavailable: {holder_filter}")
 
+    try:
+        holder_filter_relative = holder_filter.relative_to(code_root()).as_posix()
+    except ValueError as exc:
+        raise RuntimeError("Image-holder rendering filter is outside the installed code tree") from exc
+
+    holder_filter_sha256 = _sha256(holder_filter)
     cmd = [
         "pandoc",
         str(markdown_file),
         "--from=markdown+yaml_metadata_block+link_attributes",
         "--toc",
-        f"--lua-filter={holder_filter}",
+        f"--lua-filter={holder_filter_relative}",
+        f"--variable=book-system-holder-renderer-sha256={holder_filter_sha256}",
         f"--resource-path={_resource_path(markdown_file, resource_dir)}",
     ]
 

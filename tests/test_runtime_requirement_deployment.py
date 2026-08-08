@@ -36,9 +36,7 @@ def test_exact_production_to_current_candidate_is_only_pillow(tmp_path: Path) ->
     root = Path(__file__).resolve().parents[1]
     current = tmp_path / "production-requirements.txt"
     write_requirements(current, *PRODUCTION_REQUIREMENTS_BEFORE_IMAGE_HOLDERS)
-
     plan = requirements.plan_reconciliation(current, root / "requirements.txt")
-
     assert plan.policy == "additive"
     assert [item.raw for item in plan.additions] == ["Pillow==12.3.0"]
 
@@ -59,6 +57,7 @@ def test_unchanged_requirement_plan_is_allowed(tmp_path: Path) -> None:
         (["fastapi==0.115.6"], ["fastapi==0.116.0"], "replace an existing direct requirement"),
         (["fastapi==0.115.6", "pydantic==2.10.4"], ["fastapi==0.115.6"], "remove an existing direct requirement"),
         (["uvicorn[standard]==0.34.0"], ["uvicorn[other]==0.34.0"], "replace an existing direct requirement"),
+        (["fastapi==0.115.6"], ["fastapi==0.115.6", "new-package[extra]==1.0"], "protected dependency migration"),
     ],
 )
 def test_non_additive_requirement_changes_fail_closed(

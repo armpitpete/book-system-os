@@ -28,3 +28,7 @@ def logs_dir() -> Path:
 
 def templates_dir() -> Path:
     return repo_root() / "templates"
+
+
+def filters_dir() -> Path:
+    return repo_root() / "filters"

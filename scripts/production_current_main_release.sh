@@ -8,6 +8,8 @@ CANDIDATE_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 BASE_LAUNCHER="$CANDIDATE_ROOT/scripts/production_corpus_runtime_release_configured.sh"
 BACKUP_LAUNCHER="$CANDIDATE_ROOT/scripts/backup_persistent_state.sh"
 LIVE_ACCEPTANCE="$CANDIDATE_ROOT/scripts/current_main_live_acceptance.py"
+REQUIREMENTS_RECONCILER="$CANDIDATE_ROOT/scripts/reconcile_runtime_requirements.py"
+IMAGE_HOLDER_ACCEPTANCE="$CANDIDATE_ROOT/scripts/image_holder_live_acceptance.py"
 REPO_ROOT="/opt/book-system"
 EXPECTED_BEFORE=""
 TARGET_COMMIT=""
@@ -29,8 +31,9 @@ Usage:
     [--evidence-root /var/log/book-system/<new-directory>]
 
 Run from a clean detached worktree at the exact target commit.
-This wrapper adds Revision Studio persistent-state backup/invariants and the
-current-delta live acceptance around the established protected corpus release.
+This wrapper adds persistent-state backup/invariants, additive-only runtime
+requirement reconciliation, and current-delta live acceptance around the
+established protected corpus release.
 EOF
 }
 
@@ -126,7 +129,12 @@ is_sha "$TARGET_COMMIT" || { echo "--target-commit must be a full lowercase SHA"
   exit 2
 }
 
-for path in "$BASE_LAUNCHER" "$BACKUP_LAUNCHER" "$LIVE_ACCEPTANCE"; do
+for path in \
+  "$BASE_LAUNCHER" \
+  "$BACKUP_LAUNCHER" \
+  "$LIVE_ACCEPTANCE" \
+  "$REQUIREMENTS_RECONCILER" \
+  "$IMAGE_HOLDER_ACCEPTANCE"; do
   [[ -f "$path" ]] || fail "Required reviewed release component is unavailable: $path"
 done
 [[ -d "$CANDIDATE_ROOT/.git" || -f "$CANDIDATE_ROOT/.git" ]] || fail "Candidate is not a Git worktree"
@@ -143,6 +151,11 @@ ENV_FILE="$(readlink -f "$ENV_FILE")"
 [[ -f "$ENV_FILE" ]] || fail "Protected environment file is unavailable: $ENV_FILE"
 [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$EXPECTED_BEFORE" ]] || fail "Production is not at exact expected-before commit"
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || fail "Production repository is not clean before release"
+
+python_bin="$REPO_ROOT/.venv/bin/python"
+[[ -x "$python_bin" ]] || fail "Production virtualenv Python is unavailable"
+[[ -f "$REPO_ROOT/requirements.txt" ]] || fail "Current production requirements are unavailable"
+[[ -f "$CANDIDATE_ROOT/requirements.txt" ]] || fail "Candidate requirements are unavailable"
 
 git -C "$REPO_ROOT" fetch --prune origin
 [[ "$(git -C "$REPO_ROOT" rev-parse origin/main)" == "$TARGET_COMMIT" ]] || fail "origin/main is not the exact target"
@@ -175,6 +188,21 @@ chmod 0600 "$EVIDENCE_ROOT/predeploy-backup.log"
 [[ "$backup_status" -eq 0 ]] || fail "Pre-deploy persistent-state backup failed"
 
 set +e
+"$python_bin" "$REQUIREMENTS_RECONCILER" \
+  --current "$REPO_ROOT/requirements.txt" \
+  --candidate "$CANDIDATE_ROOT/requirements.txt" \
+  --python "$python_bin" \
+  2>&1 | tee "$EVIDENCE_ROOT/runtime-requirements.log"
+requirements_status=${PIPESTATUS[0]}
+set -e
+chmod 0600 "$EVIDENCE_ROOT/runtime-requirements.log"
+[[ "$requirements_status" -eq 0 ]] || fail "Runtime requirement reconciliation failed before deployment"
+[[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$EXPECTED_BEFORE" ]] || fail "Production code changed during requirement reconciliation"
+for unit in book-system-api.service book-system-worker.service; do
+  systemctl is-active --quiet "$unit" || fail "$unit is not active after requirement reconciliation"
+done
+
+set +e
 bash "$BASE_LAUNCHER" \
   --repo-root "$REPO_ROOT" \
   --expected-before "$EXPECTED_BEFORE" \
@@ -192,8 +220,6 @@ chmod 0600 "$EVIDENCE_ROOT/base-release.log"
 [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$TARGET_COMMIT" ]] || fail "Production did not finish at exact target"
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || fail "Production repository is not clean after base release"
 
-python_bin="$REPO_ROOT/.venv/bin/python"
-[[ -x "$python_bin" ]] || fail "Production virtualenv Python is unavailable"
 set +e
 (
   cd "$REPO_ROOT"
@@ -208,6 +234,18 @@ live_status=${PIPESTATUS[0]}
 set -e
 chmod 0600 "$EVIDENCE_ROOT/current-main-live.log"
 [[ "$live_status" -eq 0 ]] || fail "Current-main live acceptance failed"
+
+set +e
+env PATH="/opt/book-system-runtime/pandoc/current/bin:$PATH" \
+  "$python_bin" "$REPO_ROOT/scripts/image_holder_live_acceptance.py" \
+    --repo-root "$REPO_ROOT" \
+    --expected-commit "$TARGET_COMMIT" \
+    --evidence-dir "$EVIDENCE_ROOT/image-holder-live" \
+    2>&1 | tee "$EVIDENCE_ROOT/image-holder-live.log"
+image_holder_status=${PIPESTATUS[0]}
+set -e
+chmod 0600 "$EVIDENCE_ROOT/image-holder-live.log"
+[[ "$image_holder_status" -eq 0 ]] || fail "Image-holder live acceptance failed"
 
 snapshot_revisions "$REPO_ROOT/books/revisions" "$EVIDENCE_ROOT/revisions-after.json"
 cmp -s "$EVIDENCE_ROOT/revisions-before.json" "$EVIDENCE_ROOT/revisions-after.json" || fail "Revision Studio persistent state changed during release acceptance"
@@ -224,8 +262,10 @@ expected_before=$EXPECTED_BEFORE
 target_commit=$TARGET_COMMIT
 production_head=$(git -C "$REPO_ROOT" rev-parse HEAD)
 predeploy_persistent_backup=pass
+runtime_requirements_reconciled=pass
 base_corpus_release=pass
 current_main_live_acceptance=pass
+image_holder_live_acceptance=pass
 revision_persistent_state_unchanged=true
 actual_book_readiness_claimed=false
 EOF
@@ -234,6 +274,8 @@ chmod 0600 "$EVIDENCE_ROOT/result.txt"
 printf '\nCURRENT MAIN RELEASE — PASS\n'
 printf 'Expected before: %s\n' "$EXPECTED_BEFORE"
 printf 'Deployed commit: %s\n' "$TARGET_COMMIT"
+printf 'Runtime requirements reconciled: true\n'
+printf 'Image-holder live acceptance: pass\n'
 printf 'Revision persistent state unchanged: true\n'
 printf 'Actual book readiness claimed: false\n'
 printf 'Evidence: %s\n' "$EVIDENCE_ROOT"

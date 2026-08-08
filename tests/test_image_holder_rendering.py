@@ -96,7 +96,7 @@ def _docx_document_xml(path: Path) -> str:
         return archive.read("word/document.xml").decode("utf-8", errors="replace")
 
 
-def test_all_publish_commands_use_holder_filter_and_manuscript_resource_path(
+def test_all_publish_commands_use_holder_filter_and_infer_manuscript_resource_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -109,7 +109,7 @@ def test_all_publish_commands_use_holder_filter_and_manuscript_resource_path(
     markdown.write_text("# Book\n", encoding="utf-8")
 
     for output in PUBLISH_OUTPUTS:
-        command = _pandoc_command(markdown, output, resource_dir=input_dir)
+        command = _pandoc_command(markdown, output)
         assert "--from=markdown+yaml_metadata_block+link_attributes" in command
         assert f"--lua-filter={HOLDER_FILTER}" in command
         resource_argument = next(
@@ -196,12 +196,7 @@ def test_validated_relative_holders_render_in_all_four_outputs(
     cleaned = work_dir / "book-clean.md"
     cleaned.write_text(markdown, encoding="utf-8")
 
-    outputs = pandoc_export(
-        cleaned,
-        output_dir,
-        log_file,
-        resource_dir=input_dir,
-    )
+    outputs = pandoc_export(cleaned, output_dir, log_file)
 
     assert set(outputs) == {"pdf_standard", "pdf_nd", "epub", "docx"}
     for key in ("pdf_standard", "pdf_nd"):

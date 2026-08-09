@@ -1,58 +1,88 @@
 # Book System OS
 
-Usability-first publishing service for `publish.toiletrage.co.uk`.
+Usability-first deterministic publishing and controlled revision service for `publish.toiletrage.co.uk`.
 
-The v0.1 product is a deterministic publishing core:
+Book System OS now has three deliberately separate scope statements:
 
-```text
-Authenticated dashboard/API
--> file-based job queue
--> background worker
--> conservative Markdown normalisation
--> Pandoc/XeLaTeX export
--> downloadable outputs
-```
+1. **Historical v0.1 deterministic core** — fixed historical contract, **10/10 gates — 100% complete**.
+2. **Current implemented publishing engine** — defined by `docs/CURRENT_PRODUCT_CONTRACT_V1.md`, **12/12 current-engine gates — 100% of that fixed contract**.
+3. **Future Book System OS** — author-facing workspace, real-book acceptance, external production proof and later product lanes; no overall completion percentage is authorised.
 
-AI Semantic Architect mode is intentionally excluded. The wider Book System OS remains incomplete and has no authoritative percentage.
+These percentages are not interchangeable. Completion of a fixed implementation contract does not mean that a real book is publication-ready or print-ready, or that the wider product is complete.
 
-## Completion authority
+## Historical v0.1 authority
 
-The fixed v0.1 scope and completion rules are defined in:
+The original v0.1 deterministic publishing core remains governed by:
 
 - `docs/PRODUCT_CONTRACT.md`
 - `docs/COMPLETION_CONTRACT.md`
 - `docs/RELEASE_ACCEPTANCE.md`
 - `docs/completion-authority.json`
 
-The fixed v0.1 deterministic publishing core is **10 of 10 gates — 100% complete**. PR #27 passed exact-head CI run #47 and merged as `a4589d7e99223cf8a875f372136f09b057de1ddf`. The pre-stabilisation baseline was 7 of 10 gates — 70%.
+Its fixed denominator remains **10 of 10 gates — 100% complete**. Later capabilities do not rewrite that historical claim.
 
-Completion of the v0.1 core does not mean that the planned publish gateway, print-production system or Semantic Architect is complete.
+## Current Product Contract v1
+
+The Book System OS that exists now is governed by:
+
+- `docs/CURRENT_PRODUCT_CONTRACT_V1.md`
+- `docs/BOS_RDY_001_READINESS_CONTRACT.md`
+- `docs/V0_2_VALIDATION_API.md`
+- `docs/V0_2_PUBLISH_DRY_RUN_API.md`
+- `docs/IMAGE_HOLDERS_V0_1.md`
+- `docs/IMAGE_HOLDERS_V0_2.md`
+
+The fixed Current Product Contract v1 denominator is **12/12 current-engine gates**. It covers the implemented deterministic publishing engine, not the wider aspirational author-facing product.
+
+The current architecture keeps these claims separate:
+
+- Story Validation / story readiness;
+- production validity;
+- digital-publication readiness;
+- print readiness;
+- human artifact acceptance.
+
+A successful build does not collapse those into one vague `complete` or `ready` state.
+
+## Current implemented journey
+
+```text
+Authenticated manuscript
+-> side-effect-free validation
+-> side-effect-free publish dry-run
+-> optional persistent production submission
+-> file-based job queue + background worker
+-> conservative structural normalisation
+-> validated image-holder rendering when present
+-> Pandoc/XeLaTeX export
+-> standard PDF + ND PDF + EPUB + DOCX
+-> retained provenance, manifests, logs and evidence
+-> Revision Studio proposal/review flow when used
+-> BOS-RDY-001 exact-source / exact-artifact readiness evaluation
+-> explicit human acceptance where the readiness class requires it
+```
 
 ## Current implemented scope
 
-- FastAPI dashboard
-- Markdown submission form
-- explicit test/production selection for dashboard jobs
-- production-classified API submissions
-- file-based persistent jobs
-- background worker with lock files
-- conservative structural normalisation
+- FastAPI dashboard and authenticated API
+- explicit local-development mode and production fail-closed authentication
+- persistent file-based jobs and background worker
+- test, production and archived lifecycle states
+- job status, logs, event history, retry and controlled cleanup
+- conservative non-inventive Markdown normalisation
+- authenticated side-effect-free manuscript validation
+- authenticated side-effect-free publish dry-run planning
 - standard PDF
 - ND-readable PDF
 - EPUB
 - DOCX
-- authenticated output download links
-- readable log viewer
-- lifecycle state: test, production, archived
-- retry count and event history
-- failed-job retry
-- preview-before-archive cleanup for old test jobs
-- systemd service files
-- Apache reverse-proxy example
-- safe deploy script
-- unit/API tests and real four-format export test
-- authenticated side-effect-free manuscript validation
-- authenticated side-effect-free publish dry-run planning
+- exact source/artifact provenance and output evidence
+- BOS-RDY-001 independent readiness states
+- Revision Studio document/proposal/decision/history/package workflow
+- image-holder validation and controlled v0.2 rendering
+- relative local image-resource resolution
+- hardened production service, backup/recovery and exact-state release controls
+- live current-main and feature-specific production acceptance
 
 ## Implemented HTTP routes
 
@@ -63,11 +93,65 @@ Completion of the v0.1 core does not mean that the planned publish gateway, prin
 - `POST /api/v1/publish/dry-run`
 - `POST /api/submit`
 - `GET /api/jobs/{job_id}`
+- Revision Studio API and read-only UI routes reported by `/api/v1/status`
 
-The `/api/v1/status` response also lists planned routes. Routes under `not_yet_implemented` are not live behaviour.
+The `/api/v1/status` response is authoritative for the live route inventory. Routes under `not_yet_implemented` are not live behaviour.
 
-The v0.2 validation request, response, findings and failure behaviour are documented in `docs/V0_2_VALIDATION_API.md`.
-The v0.2 publish dry-run route and side-effect boundary are documented in `docs/V0_2_PUBLISH_DRY_RUN_API.md`.
+In particular, the executable `/api/v1/publish`, publish-status/list and publish-retry gateway routes remain future work. The existing production submission path and the dry-run API must not be confused with those planned routes.
+
+## Readiness authority
+
+`docs/BOS_RDY_001_READINESS_CONTRACT.md` defines four independent states:
+
+- `story-ready`
+- `production-valid`
+- `digital-publication-ready`
+- `print-ready`
+
+Story Validation remains authoritative for narrative validation. Book System OS consumes Story Validation evidence but is authoritative for retained source identity, artifact generation, production validation, asset/configuration identity and publication/readiness evaluation.
+
+Machine tests and four-format generation do **not** substitute for required human inspection of the exact artifact.
+
+## Image holders
+
+The canonical internal representation remains controlled holder metadata in Markdown. Supported holders are:
+
+- Inline
+- Feature
+- Portrait
+- Full page
+- Ornament
+
+The renderer owns bounded layout geometry across both PDFs, DOCX and EPUB and sanitises author-supplied positioning/size controls that would bypass the holder contract.
+
+Arbitrary page coordinates, free-floating desktop-publishing controls, unrestricted resizing and destructive automatic raster cropping are intentionally excluded.
+
+## Current production baseline
+
+Image-holder rendering v0.2 was accepted in production on 2026-08-09 at:
+
+```text
+34a470546770dd4c4d211966e2f5660f36cbc22a
+```
+
+That production acceptance proved the exact deployment target, current-main live acceptance, four-format image-holder rendering, relative resource resolution, author-positioning sanitisation, stable API/worker state and unchanged retained job/Revision Studio state while retaining:
+
+```text
+actual_book_readiness_claimed=false
+```
+
+This is a production-engine acceptance statement, not a claim that a substantial real book has passed human publication/print acceptance.
+
+## Future priority
+
+Book System OS is currently a stronger **publishing engine** than **author-facing product**. The next lanes therefore prioritise closing that gap rather than adding more backend sophistication:
+
+1. repository-owned production preflight command;
+2. Author Asset Workspace v0.1;
+3. substantial real-book acceptance with genuine human artifact inspection;
+4. Paid External Book Production Proof (#71).
+
+Billing, SaaS infrastructure and a wider public gateway remain deferred until external production evidence justifies them.
 
 ## Server target
 
@@ -134,13 +218,23 @@ sudo systemctl reload apache2
 
 TLS certificate paths in the example must be replaced with the server's real certificate paths.
 
-## Safe deployment
+## Protected production release
 
-```bash
-sudo /opt/book-system/scripts/deploy_server.sh
+Production release is an exact-state operation, not an instruction to pull whatever is newest.
+
+The current protected release wrapper is:
+
+```text
+scripts/production_current_main_release.sh
 ```
 
-The script pulls `main` with fast-forward only, compiles the application, restarts both services, waits for local readiness and then checks the public health endpoint.
+It is run from a clean detached worktree at the exact reviewed target and requires explicit full-SHA values for:
+
+- `--expected-before`
+- `--target-commit`
+- `--confirm "DEPLOY <target>"`
+
+A fresh production preflight must bind the actual production predecessor to the exact target before deployment authority is granted. See `docs/operator-admin-manual.md` and the current release issue/evidence for the full protected procedure.
 
 ## Local checks
 

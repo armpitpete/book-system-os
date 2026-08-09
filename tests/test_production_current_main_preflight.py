@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services import resource_limits
 from scripts import production_current_main_preflight as preflight
 
 
@@ -36,6 +37,13 @@ def test_selected_env_reads_only_nonsecret_capacity_settings(tmp_path: Path) -> 
         "BOOK_MAX_TOTAL_STORAGE_BYTES": "456",
     }
     assert "secret" not in repr(values)
+
+
+def test_storage_default_matches_runtime_and_applies_when_unset() -> None:
+    assert preflight.MAX_TOTAL_STORAGE_DEFAULT == resource_limits.DEFAULT_MAX_TOTAL_STORAGE_BYTES
+    assert preflight.positive_int(
+        {}, "BOOK_MAX_TOTAL_STORAGE_BYTES", preflight.MAX_TOTAL_STORAGE_DEFAULT
+    ) == resource_limits.DEFAULT_MAX_TOTAL_STORAGE_BYTES
 
 
 def test_selected_env_rejects_symlink(tmp_path: Path) -> None:

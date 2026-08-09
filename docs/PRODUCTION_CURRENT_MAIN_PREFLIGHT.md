@@ -60,12 +60,17 @@ The preflight fails closed unless all of these pass:
 11. production virtualenv `pip check` passes for root and `www-data`;
 12. Pillow imports for root and `www-data`, with the installed version matching the candidate pin;
 13. pinned Pandoc and XeLaTeX execute for root and `www-data`;
-14. retained job count, active/locked counts, retained-state digest and Revision Studio digest are captured;
+14. retained job count, active/locked counts, retained-job digest and Revision Studio digest are captured;
 15. no active or locked publishing jobs exist;
 16. configured disk/storage capacity is healthy;
 17. `/var/tmp` is suitable for the release worktree;
 18. the exact target `production_current_main_release.sh` exists, is hashed and contains the required protected invocation/readiness markers;
-19. final production HEAD/clean state, protected config hash, retained jobs, Revision Studio state, API/worker state, worker PID/restarts and `pip check` remain unchanged.
+19. final production HEAD/clean state, protected config hash, retained jobs, Revision Studio state, API/worker state, worker PID/restarts and `pip check` remain unchanged;
+20. the Author Asset Workspace store is a safe regular directory tree when present, with no symlinks or unsupported entries;
+21. combined retained publishing-job bytes plus author-asset bytes remain within `BOOK_MAX_TOTAL_STORAGE_BYTES`, using the same 10 GiB runtime default when that setting is absent;
+22. the exact Author Asset Workspace tree digest remains unchanged across the complete read-only preflight.
+
+The author-asset invariant is layered around the established preflight engine by `scripts/production_author_asset_preflight.py`. The wrapper withholds the base PASS output until the author-asset after-check also passes, so a late state mismatch cannot be presented as a successful preflight.
 
 ## Non-mutation boundary
 
@@ -76,7 +81,7 @@ The preflight must not:
 - install or reconcile runtime packages;
 - stop, start or restart services;
 - change `config/env`;
-- change retained jobs or Revision Studio state;
+- change retained jobs, Revision Studio state or Author Asset Workspace state;
 - delete production data;
 - deploy code.
 
@@ -85,11 +90,14 @@ Remote `main` is observed with `git ls-remote`, so target binding does not requi
 The only intentional writes are:
 
 - private evidence files under the chosen evidence directory;
-- a short executable suitability probe under the release-worktree parent, removed immediately after the check.
+- a short executable suitability probe under the release-worktree parent, removed immediately after the check;
+- private temporary wrapper evidence under `/var/tmp`, removed when the wrapper exits.
+
+The author-asset helper appends its pass marker to the protected `result.txt` and writes `author-assets-preflight.json` only after the base preflight and exact state comparison both pass.
 
 ## Output
 
-A pass prints:
+A pass includes:
 
 ```text
 FRESH-PRODUCTION-PREFLIGHT=PASS
@@ -97,12 +105,17 @@ expected-before=<sha>
 target-commit=<sha>
 evidence=<path>
 deployment-authorized=false
+author-asset-persistent-state-unchanged=true
+author-assets-digest=<sha256>
+author-assets-bytes=<bytes>
+combined-retained-bytes=<bytes>
 ```
 
 The evidence directory contains:
 
-- `preflight.json` — structured evidence;
-- `result.txt` — concise protected result and key digests.
+- `preflight.json` — established structured preflight evidence;
+- `author-assets-preflight.json` — Author Asset Workspace state/capacity evidence;
+- `result.txt` — concise protected result and key digests, including the author-asset unchanged marker.
 
 Files are mode `600`; the evidence directory is mode `700`.
 
@@ -121,5 +134,7 @@ If deployment is authorised, the separate protected release wrapper remains auth
 ```text
 scripts/production_current_main_release.sh
 ```
+
+That release wrapper takes its own predeploy persistent backup and independently compares Revision Studio and Author Asset Workspace trees before and after release acceptance.
 
 Implementation, merge, production preflight, deployment, live acceptance and human artifact acceptance remain separate facts.

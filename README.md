@@ -2,11 +2,11 @@
 
 Usability-first deterministic publishing and controlled revision service for `publish.toiletrage.co.uk`.
 
-Book System OS now has three deliberately separate scope statements:
+Book System OS has three deliberately separate scope statements:
 
 1. **Historical v0.1 deterministic core** — fixed historical contract, **10/10 gates — 100% complete**.
 2. **Current implemented publishing engine** — defined by `docs/CURRENT_PRODUCT_CONTRACT_V1.md`, **12/12 current-engine gates — 100% of that fixed contract**.
-3. **Future Book System OS** — author-facing workspace, real-book acceptance, external production proof and later product lanes; no overall completion percentage is authorised.
+3. **Wider Book System OS product** — later product extensions and evidence lanes are tracked separately; no overall completion percentage is authorised.
 
 These percentages are not interchangeable. Completion of a fixed implementation contract does not mean that a real book is publication-ready or print-ready, or that the wider product is complete.
 
@@ -31,8 +31,9 @@ The Book System OS that exists now is governed by:
 - `docs/V0_2_PUBLISH_DRY_RUN_API.md`
 - `docs/IMAGE_HOLDERS_V0_1.md`
 - `docs/IMAGE_HOLDERS_V0_2.md`
+- `docs/AUTHOR_ASSET_WORKSPACE_V0_1.md`
 
-The fixed Current Product Contract v1 denominator is **12/12 current-engine gates**. It covers the implemented deterministic publishing engine, not the wider aspirational author-facing product.
+The fixed Current Product Contract v1 denominator is **12/12 current-engine gates**. Capabilities added after that fixed denominator, such as Author Asset Workspace v0.1, keep their own implementation/acceptance evidence rather than turning the denominator into a moving target.
 
 The current architecture keeps these claims separate:
 
@@ -47,10 +48,15 @@ A successful build does not collapse those into one vague `complete` or `ready` 
 ## Current implemented journey
 
 ```text
-Authenticated manuscript
+Optional Author Asset Workspace
+-> upload / inspect image
+-> holder suitability + DPI/aspect feedback
+-> canonical holder Markdown
+-> authenticated manuscript
 -> side-effect-free validation
 -> side-effect-free publish dry-run
 -> optional persistent production submission
+-> referenced workspace assets copied into retained job input
 -> file-based job queue + background worker
 -> conservative structural normalisation
 -> validated image-holder rendering when present
@@ -72,6 +78,10 @@ Authenticated manuscript
 - conservative non-inventive Markdown normalisation
 - authenticated side-effect-free manuscript validation
 - authenticated side-effect-free publish dry-run planning
+- authenticated Author Asset Workspace v0.1 for JPEG/PNG/WebP upload and preview
+- holder suitability, aspect and effective-DPI feedback driven by the production validator
+- canonical holder Markdown generation with alt/caption/decorative semantics
+- SHA-verified copying of referenced workspace assets into retained job input with provenance
 - standard PDF
 - ND-readable PDF
 - EPUB
@@ -93,6 +103,11 @@ Authenticated manuscript
 - `POST /api/v1/publish/dry-run`
 - `POST /api/submit`
 - `GET /api/jobs/{job_id}`
+- `GET /assets`
+- `POST /assets`
+- `GET /assets/{asset_id}`
+- `POST /assets/{asset_id}/configure`
+- `GET /assets/{asset_id}/preview`
 - Revision Studio API and read-only UI routes reported by `/api/v1/status`
 
 The `/api/v1/status` response is authoritative for the live route inventory. Routes under `not_yet_implemented` are not live behaviour.
@@ -112,6 +127,18 @@ Story Validation remains authoritative for narrative validation. Book System OS 
 
 Machine tests and four-format generation do **not** substitute for required human inspection of the exact artifact.
 
+## Author Asset Workspace
+
+`GET /assets` is the authenticated author-facing image workflow.
+
+It lets an author upload JPEG, PNG or WebP, preview the source, inspect dimensions/aspect ratio, see effective DPI and compatibility for all five named holders, enter alt/caption/decorative semantics, and receive canonical holder Markdown.
+
+Workspace originals are persistent state under `books/assets`. Runtime contents are Git-ignored, included in persistent backup/restore, protected by release/preflight state invariants, and identified by SHA-256.
+
+When a queued manuscript references a generated `assets/<asset-id>/source.<ext>` path, Book System OS verifies the workspace asset and copies it into the job's retained `input/assets/...` tree. The job records inspectable asset provenance and accounts for the copied bytes before admission.
+
+The workspace does **not** provide freeform page coordinates, unrestricted resizing, floating text/images, destructive automatic crops, cover/spine/bleed design or printer-specific DTP controls.
+
 ## Image holders
 
 The canonical internal representation remains controlled holder metadata in Markdown. Supported holders are:
@@ -123,6 +150,8 @@ The canonical internal representation remains controlled holder metadata in Mark
 - Ornament
 
 The renderer owns bounded layout geometry across both PDFs, DOCX and EPUB and sanitises author-supplied positioning/size controls that would bypass the holder contract.
+
+The Author Asset Workspace reuses the same holder validator for its suitability feedback. It does not maintain a separate looser rule set.
 
 Arbitrary page coordinates, free-floating desktop-publishing controls, unrestricted resizing and destructive automatic raster cropping are intentionally excluded.
 
@@ -140,16 +169,16 @@ That production acceptance proved the exact deployment target, current-main live
 actual_book_readiness_claimed=false
 ```
 
+Later merged implementation is not automatically deployed. Production remains at the last exact live-accepted target until another exact predecessor -> target deployment is separately authorised and accepted.
+
 This is a production-engine acceptance statement, not a claim that a substantial real book has passed human publication/print acceptance.
 
 ## Future priority
 
-Book System OS is currently a stronger **publishing engine** than **author-facing product**. The next lanes therefore prioritise closing that gap rather than adding more backend sophistication:
+Book System OS remains a stronger **publishing engine** than **author-facing product**. Repository-owned production preflight and Author Asset Workspace v0.1 close two previously identified gaps; the next evidence lanes are:
 
-1. repository-owned production preflight command;
-2. Author Asset Workspace v0.1;
-3. substantial real-book acceptance with genuine human artifact inspection;
-4. Paid External Book Production Proof (#71).
+1. substantial real-book acceptance with genuine human artifact inspection;
+2. Paid External Book Production Proof (#71).
 
 Billing, SaaS infrastructure and a wider public gateway remain deferred until external production evidence justifies them.
 
@@ -228,7 +257,7 @@ Before deployment authorisation, run the repository-owned read-only preflight fr
 scripts/production_current_main_preflight.sh
 ```
 
-It requires exact full-SHA `--expected-before` and `--target-commit` arguments, generates protected evidence, and always leaves `deployment-authorized=false`. See `docs/PRODUCTION_CURRENT_MAIN_PREFLIGHT.md` for its complete evidence and non-mutation contract.
+It requires exact full-SHA `--expected-before` and `--target-commit` arguments, generates protected evidence, verifies the Author Asset Workspace persistent-state invariant/capacity where present, and always leaves `deployment-authorized=false`. See `docs/PRODUCTION_CURRENT_MAIN_PREFLIGHT.md` for its complete evidence and non-mutation contract.
 
 After a successful preflight and separate explicit authorisation for that exact SHA pair, the protected release wrapper is:
 
@@ -256,7 +285,7 @@ The real export integration test requires `pandoc` and `xelatex`. CI installs bo
 
 ## Operator guidance
 
-See `docs/PRODUCTION_CURRENT_MAIN_PREFLIGHT.md` for protected preflight/release entrypoints. See `docs/operator-admin-manual.md` for job retry, cleanup, recovery, resource limits and general service checks.
+See `docs/PRODUCTION_CURRENT_MAIN_PREFLIGHT.md` for protected preflight/release entrypoints, `docs/AUTHOR_ASSET_WORKSPACE_V0_1.md` for the author image workflow, and `docs/operator-admin-manual.md` for job retry, cleanup, recovery, resource limits and general service checks.
 
 <!-- AUTO:PROJECT-COMPLETION:START -->
 ## Completion

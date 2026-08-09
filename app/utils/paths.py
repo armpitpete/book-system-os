@@ -26,6 +26,12 @@ def jobs_dir() -> Path:
     return path
 
 
+def author_assets_dir() -> Path:
+    path = repo_root() / "books" / "assets"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def logs_dir() -> Path:
     path = repo_root() / "logs"
     path.mkdir(parents=True, exist_ok=True)

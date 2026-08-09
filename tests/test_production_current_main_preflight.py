@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from app.services import resource_limits
+from scripts import production_author_asset_preflight as asset_preflight
 from scripts import production_current_main_preflight as preflight
 
 
@@ -39,8 +41,9 @@ def test_selected_env_reads_only_nonsecret_capacity_settings(tmp_path: Path) -> 
     assert "secret" not in repr(values)
 
 
-def test_storage_default_matches_runtime_and_applies_when_unset() -> None:
+def test_storage_default_matches_runtime_and_asset_preflight() -> None:
     assert preflight.MAX_TOTAL_STORAGE_DEFAULT == resource_limits.DEFAULT_MAX_TOTAL_STORAGE_BYTES
+    assert asset_preflight.MAX_TOTAL_STORAGE_DEFAULT == resource_limits.DEFAULT_MAX_TOTAL_STORAGE_BYTES
     assert preflight.positive_int(
         {}, "BOOK_MAX_TOTAL_STORAGE_BYTES", preflight.MAX_TOTAL_STORAGE_DEFAULT
     ) == resource_limits.DEFAULT_MAX_TOTAL_STORAGE_BYTES
@@ -76,6 +79,66 @@ def test_snapshot_tree_rejects_symlink(tmp_path: Path) -> None:
     (root / "alias.txt").symlink_to(target)
     with pytest.raises(preflight.PreflightError, match="symlink"):
         preflight.snapshot_tree(root)
+
+
+def test_asset_preflight_detects_persistent_state_change(tmp_path: Path) -> None:
+    root = tmp_path / "book-system"
+    jobs = root / "books" / "jobs"
+    assets = root / "books" / "assets"
+    config = root / "config"
+    jobs.mkdir(parents=True)
+    assets.mkdir(parents=True)
+    config.mkdir(parents=True)
+    env = config / "env"
+    env.write_text("BOOK_MAX_TOTAL_STORAGE_BYTES=1000000\n", encoding="utf-8")
+    snapshot = tmp_path / "before.json"
+
+    assert asset_preflight.main(
+        [
+            "--phase", "before",
+            "--repo-root", str(root),
+            "--env-file", str(env),
+            "--snapshot", str(snapshot),
+        ]
+    ) == 0
+    (assets / "changed.bin").write_bytes(b"changed")
+    with pytest.raises(asset_preflight.AssetPreflightError, match="changed during preflight"):
+        asset_preflight.main(
+            [
+                "--phase", "after",
+                "--repo-root", str(root),
+                "--env-file", str(env),
+                "--snapshot", str(snapshot),
+            ]
+        )
+
+
+def test_asset_preflight_records_combined_storage_and_runtime_default(tmp_path: Path) -> None:
+    root = tmp_path / "book-system"
+    jobs = root / "books" / "jobs"
+    assets = root / "books" / "assets"
+    config = root / "config"
+    jobs.mkdir(parents=True)
+    assets.mkdir(parents=True)
+    config.mkdir(parents=True)
+    (jobs / "job.bin").write_bytes(b"1234")
+    (assets / "asset.bin").write_bytes(b"123456")
+    env = config / "env"
+    env.write_text("BOOK_BIND_PORT=8080\n", encoding="utf-8")
+    snapshot = tmp_path / "before.json"
+
+    assert asset_preflight.main(
+        [
+            "--phase", "before",
+            "--repo-root", str(root),
+            "--env-file", str(env),
+            "--snapshot", str(snapshot),
+        ]
+    ) == 0
+    payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert payload["combined_retained_bytes"] == 10
+    assert payload["maximum_retained_bytes"] == resource_limits.DEFAULT_MAX_TOTAL_STORAGE_BYTES
+    assert payload["maximum_retained_bytes_source"] == "runtime-default"
 
 
 def test_job_state_counts_active_and_locked_jobs(tmp_path: Path) -> None:
@@ -130,13 +193,12 @@ def test_requirement_plan_is_read_only_for_current_repository() -> None:
 
 def test_preflight_source_does_not_contain_production_mutators() -> None:
     root = Path(__file__).resolve().parents[1]
-    python_source = (root / "scripts" / "production_current_main_preflight.py").read_text(
-        encoding="utf-8"
-    )
-    shell_source = (root / "scripts" / "production_current_main_preflight.sh").read_text(
-        encoding="utf-8"
-    )
-    combined = python_source + "\n" + shell_source
+    sources = [
+        root / "scripts" / "production_current_main_preflight.py",
+        root / "scripts" / "production_author_asset_preflight.py",
+        root / "scripts" / "production_current_main_preflight.sh",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in sources)
     forbidden = (
         'systemctl", "start',
         'systemctl", "stop',
@@ -151,7 +213,7 @@ def test_preflight_source_does_not_contain_production_mutators() -> None:
         assert marker not in combined
 
 
-def test_shell_wrapper_is_thin_and_fail_closed() -> None:
+def test_shell_wrapper_is_bounded_and_fail_closed() -> None:
     root = Path(__file__).resolve().parents[1]
     shell = (root / "scripts" / "production_current_main_preflight.sh").read_text(
         encoding="utf-8"
@@ -159,4 +221,7 @@ def test_shell_wrapper_is_thin_and_fail_closed() -> None:
     assert "set -Eeuo pipefail" in shell
     assert "umask 077" in shell
     assert "production_current_main_preflight.py" in shell
-    assert "exec /usr/bin/python3" in shell
+    assert "production_author_asset_preflight.py" in shell
+    assert "--phase before" in shell
+    assert "--phase after" in shell
+    assert "base preflight did not report an absolute evidence directory" in shell

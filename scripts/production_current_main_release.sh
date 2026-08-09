@@ -8,6 +8,7 @@ CANDIDATE_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 BASE_LAUNCHER="$CANDIDATE_ROOT/scripts/production_corpus_runtime_release_configured.sh"
 BACKUP_LAUNCHER="$CANDIDATE_ROOT/scripts/backup_persistent_state.sh"
 LIVE_ACCEPTANCE="$CANDIDATE_ROOT/scripts/current_main_live_acceptance.py"
+AUTHOR_ASSET_ACCEPTANCE="$CANDIDATE_ROOT/scripts/author_asset_live_acceptance.py"
 REQUIREMENTS_RECONCILER="$CANDIDATE_ROOT/scripts/reconcile_runtime_requirements.py"
 IMAGE_HOLDER_ACCEPTANCE="$CANDIDATE_ROOT/scripts/image_holder_live_acceptance.py"
 REPO_ROOT="/opt/book-system"
@@ -65,10 +66,11 @@ is_sha() {
   [[ "$1" =~ ^[0-9a-f]{40}$ ]]
 }
 
-snapshot_revisions() {
+snapshot_persistent_tree() {
   local root="$1"
   local destination="$2"
-  /usr/bin/python3 - "$root" "$destination" <<'PY'
+  local label="$3"
+  /usr/bin/python3 - "$root" "$destination" "$label" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -80,16 +82,17 @@ from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
 destination = Path(sys.argv[2]).resolve()
+label = sys.argv[3]
 entries = []
 if root.exists():
     if root.is_symlink() or not root.is_dir():
-        raise SystemExit("Revision Studio root is not a safe directory")
+        raise SystemExit(f"{label} root is not a safe directory")
     for current_root, directories, files in os.walk(root, followlinks=False):
         current = Path(current_root)
         for name in sorted(directories):
             path = current / name
             if path.is_symlink():
-                raise SystemExit(f"Revision Studio symlink is not allowed: {path}")
+                raise SystemExit(f"{label} symlink is not allowed: {path}")
             entries.append({
                 "path": path.relative_to(root).as_posix(),
                 "type": "directory",
@@ -100,7 +103,7 @@ if root.exists():
                 continue
             path = current / name
             if path.is_symlink() or not path.is_file():
-                raise SystemExit(f"Unsafe Revision Studio entry: {path}")
+                raise SystemExit(f"Unsafe {label} entry: {path}")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             entries.append({
                 "path": path.relative_to(root).as_posix(),
@@ -110,7 +113,11 @@ if root.exists():
                 "sha256": digest,
             })
 destination.write_text(
-    json.dumps(sorted(entries, key=lambda item: (item["path"], item["type"])), indent=2, sort_keys=True) + "\n",
+    json.dumps(
+        sorted(entries, key=lambda item: (item["path"], item["type"])),
+        indent=2,
+        sort_keys=True,
+    ) + "\n",
     encoding="utf-8",
 )
 os.chmod(destination, 0o600)
@@ -133,6 +140,7 @@ for path in \
   "$BASE_LAUNCHER" \
   "$BACKUP_LAUNCHER" \
   "$LIVE_ACCEPTANCE" \
+  "$AUTHOR_ASSET_ACCEPTANCE" \
   "$REQUIREMENTS_RECONCILER" \
   "$IMAGE_HOLDER_ACCEPTANCE"; do
   [[ -f "$path" ]] || fail "Required reviewed release component is unavailable: $path"
@@ -175,7 +183,14 @@ printf '%s\n' "$TARGET_COMMIT" >"$EVIDENCE_ROOT/target-commit.txt"
 printf '%s\n' "$running_hash" >"$EVIDENCE_ROOT/wrapper-sha256.txt"
 chmod 0600 "$EVIDENCE_ROOT"/*.txt
 
-snapshot_revisions "$REPO_ROOT/books/revisions" "$EVIDENCE_ROOT/revisions-before.json"
+snapshot_persistent_tree \
+  "$REPO_ROOT/books/revisions" \
+  "$EVIDENCE_ROOT/revisions-before.json" \
+  "Revision Studio"
+snapshot_persistent_tree \
+  "$REPO_ROOT/books/assets" \
+  "$EVIDENCE_ROOT/author-assets-before.json" \
+  "Author Asset Workspace"
 
 set +e
 bash "$BACKUP_LAUNCHER" \
@@ -236,6 +251,19 @@ chmod 0600 "$EVIDENCE_ROOT/current-main-live.log"
 [[ "$live_status" -eq 0 ]] || fail "Current-main live acceptance failed"
 
 set +e
+"$python_bin" "$REPO_ROOT/scripts/author_asset_live_acceptance.py" \
+  --repo-root "$REPO_ROOT" \
+  --env-file "$ENV_FILE" \
+  --expected-commit "$TARGET_COMMIT" \
+  --public-base-url "$PUBLIC_BASE_URL" \
+  --evidence-dir "$EVIDENCE_ROOT/author-asset-live" \
+  2>&1 | tee "$EVIDENCE_ROOT/author-asset-live.log"
+author_asset_status=${PIPESTATUS[0]}
+set -e
+chmod 0600 "$EVIDENCE_ROOT/author-asset-live.log"
+[[ "$author_asset_status" -eq 0 ]] || fail "Author Asset Workspace live acceptance failed"
+
+set +e
 env BOOK_SYSTEM_ROOT="$REPO_ROOT" \
   PATH="/opt/book-system-runtime/pandoc/current/bin:$PATH" \
   "$python_bin" "$REPO_ROOT/scripts/image_holder_live_acceptance.py" \
@@ -248,8 +276,16 @@ set -e
 chmod 0600 "$EVIDENCE_ROOT/image-holder-live.log"
 [[ "$image_holder_status" -eq 0 ]] || fail "Image-holder live acceptance failed"
 
-snapshot_revisions "$REPO_ROOT/books/revisions" "$EVIDENCE_ROOT/revisions-after.json"
+snapshot_persistent_tree \
+  "$REPO_ROOT/books/revisions" \
+  "$EVIDENCE_ROOT/revisions-after.json" \
+  "Revision Studio"
+snapshot_persistent_tree \
+  "$REPO_ROOT/books/assets" \
+  "$EVIDENCE_ROOT/author-assets-after.json" \
+  "Author Asset Workspace"
 cmp -s "$EVIDENCE_ROOT/revisions-before.json" "$EVIDENCE_ROOT/revisions-after.json" || fail "Revision Studio persistent state changed during release acceptance"
+cmp -s "$EVIDENCE_ROOT/author-assets-before.json" "$EVIDENCE_ROOT/author-assets-after.json" || fail "Author Asset Workspace persistent state changed during release acceptance"
 
 [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$TARGET_COMMIT" ]] || fail "Final production commit changed"
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || fail "Release left production repository changes"
@@ -266,9 +302,11 @@ predeploy_persistent_backup=pass
 runtime_requirements_reconciled=pass
 base_corpus_release=pass
 current_main_live_acceptance=pass
+author_asset_workspace_v0_1_live_acceptance=pass
 image_holder_live_acceptance=pass
 image_holder_rendering_v0_2_live_acceptance=pass
 revision_persistent_state_unchanged=true
+author_asset_persistent_state_unchanged=true
 actual_book_readiness_claimed=false
 EOF
 chmod 0600 "$EVIDENCE_ROOT/result.txt"
@@ -277,8 +315,10 @@ printf '\nCURRENT MAIN RELEASE — PASS\n'
 printf 'Expected before: %s\n' "$EXPECTED_BEFORE"
 printf 'Deployed commit: %s\n' "$TARGET_COMMIT"
 printf 'Runtime requirements reconciled: true\n'
+printf 'Author Asset Workspace v0.1 live acceptance: pass\n'
 printf 'Image-holder live acceptance: pass\n'
 printf 'Image-holder rendering v0.2 live acceptance: pass\n'
 printf 'Revision persistent state unchanged: true\n'
+printf 'Author asset persistent state unchanged: true\n'
 printf 'Actual book readiness claimed: false\n'
 printf 'Evidence: %s\n' "$EVIDENCE_ROOT"

@@ -8,9 +8,11 @@ It does **not** rewrite, reopen or invalidate the historical v0.1 product contra
 
 This contract creates a separate denominator for the current implemented publishing engine. It deliberately does not claim that the wider author-facing Book System OS, any individual book, or any commercial product model is complete.
 
+Capabilities added after the fixed 12-gate engine denominator may extend the product without retrospectively changing that denominator. They must still have their own explicit acceptance evidence and must not be smuggled into an old percentage.
+
 ## Current product purpose
 
-Book System OS is a deterministic publishing engine and controlled revision/production service. It accepts structured manuscript input, validates and plans publication work without side effects, preserves exact source and evidence identity, produces four deterministic output formats, supports controlled revisions and image-holder semantics, and keeps story quality, production validity, digital-publication readiness and print readiness as separate claims.
+Book System OS is a deterministic publishing engine and controlled revision/production service with a bounded author asset workflow. It accepts structured manuscript input, validates and plans publication work without side effects, preserves exact source and evidence identity, produces four deterministic output formats, supports controlled revisions and image-holder semantics, and keeps story quality, production validity, digital-publication readiness and print readiness as separate claims.
 
 The system must preserve author meaning. It may perform only authorised structural normalisation and rendering transformations. It must not silently invent, rewrite or editorially reinterpret manuscript content.
 
@@ -19,11 +21,16 @@ The system must preserve author meaning. It may perform only authorised structur
 The implemented journey is:
 
 ```text
-Author/operator manuscript
+Optional authenticated Author Asset Workspace
+-> upload/inspect image
+-> holder suitability + DPI/aspect feedback
+-> canonical holder Markdown
+-> Author/operator manuscript
 -> authenticated validation
 -> authenticated publish dry-run
 -> optional deterministic production submission
 -> retained source + persistent job
+-> referenced workspace assets copied into retained job input with provenance
 -> background worker
 -> conservative structural normalisation
 -> validated image-holder transformation when present
@@ -35,6 +42,8 @@ Author/operator manuscript
 ```
 
 The side-effect-free validation and dry-run routes do not themselves create jobs or artifacts. Production submission through the established job path remains separate from the planned executable `/api/v1/publish*` gateway.
+
+The Author Asset Workspace is also separate from production submission. Uploading an image or generating holder Markdown does not queue a publishing job and does not create a readiness claim.
 
 ## Deterministic publishing authority
 
@@ -118,6 +127,29 @@ Revision Studio does not silently promote a proposal into accepted authority. Hu
 
 Revision Studio is separate from Story Validation and from deterministic book export. A revision proposal, an accepted revision, a generated artifact and a readiness claim are different objects and must remain distinguishable.
 
+## Author Asset Workspace v0.1
+
+`docs/AUTHOR_ASSET_WORKSPACE_V0_1.md` defines the implemented bounded author-facing image workflow.
+
+Its current authority includes:
+
+- authenticated JPEG/PNG/WebP upload;
+- preservation of original uploaded image bytes in `books/assets`;
+- source preview, pixel dimensions and aspect-ratio reporting;
+- holder-by-holder effective-DPI and suitability feedback;
+- controlled selection of `inline`, `feature`, `portrait`, `full-page` or `ornament`;
+- alt-text, caption and decorative semantics;
+- canonical holder Markdown generation;
+- SHA-verified copying of referenced workspace assets into queued job input;
+- per-job author-asset provenance;
+- persistent backup/release/preflight protection for the author-asset store.
+
+The workspace reuses the existing image-holder validator as authority. It does not create a second, looser suitability system.
+
+The workspace does not provide arbitrary page coordinates, unrestricted resizing, free-floating text/images, destructive automatic crop tools, cover/spine/bleed design or printer-specific DTP controls.
+
+A holder compatibility result is not a publication-readiness or print-readiness decision.
+
 ## Image-holder validation and rendering
 
 Image holders provide bounded layout semantics while keeping Markdown as the canonical internal representation.
@@ -134,7 +166,9 @@ The image-holder contract validates source suitability, local-file availability,
 
 The v0.2 renderer maps validated holders into controlled writer-specific layout semantics across both PDFs, DOCX and EPUB. It owns holder geometry and sanitises author-supplied positioning/size controls that would bypass the holder contract.
 
-Relative local image assets must resolve from the retained manuscript input. Unsupported, remote or unsuitable holder inputs fail closed where the contract requires it.
+Relative local image assets must resolve from the retained manuscript input. Workspace-originated assets are copied into that retained job input before processing, so deterministic production does not depend on mutable author-workspace paths.
+
+Unsupported, remote or unsuitable holder inputs fail closed where the contract requires it.
 
 The system does not provide arbitrary page coordinates, unrestricted resizing, free-floating desktop-publishing controls or destructive automatic raster cropping.
 
@@ -164,6 +198,7 @@ The current system preserves an inspectable proof trail around production work. 
 - output manifests and output-evidence hashes;
 - production-configuration identity;
 - relevant-asset identity;
+- Author Asset Workspace upload/copy identity;
 - Story Validation evidence identity;
 - production-validation evidence identity;
 - human-acceptance evidence identity;
@@ -194,7 +229,7 @@ Production release is an exact-state operation, not a generic "pull latest" acti
 3. a clean production checkout;
 4. target/main binding and ancestry checks;
 5. runtime/toolchain and service-account compatibility checks;
-6. retained-state and protected-config baselines;
+6. retained-state and protected-config baselines, including author assets where present;
 7. a fresh detached release worktree at the exact target;
 8. explicit deployment authorisation for the exact predecessor -> target transition;
 9. guarded deployment using the reviewed release wrapper;
@@ -204,14 +239,15 @@ Production release is an exact-state operation, not a generic "pull latest" acti
 
 Deployment, implementation, merge, machine acceptance and human artifact acceptance remain separate facts.
 
-The image-holder rendering v0.2 production release at `34a470546770dd4c4d211966e2f5660f36cbc22a` established the baseline for this contract: guarded deployment, current-main live acceptance and four-format image-holder live acceptance passed while `actual_book_readiness_claimed=false` remained enforced.
+The image-holder rendering v0.2 production release at `34a470546770dd4c4d211966e2f5660f36cbc22a` remains the accepted production baseline until a later exact target is separately authorised and live-accepted. It established guarded deployment, current-main live acceptance and four-format image-holder live acceptance while `actual_book_readiness_claimed=false` remained enforced.
+
+An implementation merged after that baseline is not thereby deployed.
 
 ## Current exclusions
 
 The following are outside this current implemented-product contract:
 
 - executable `POST /api/v1/publish` and publish status/list/retry gateway routes;
-- an author-facing asset/image workspace;
 - arbitrary page coordinates or desktop-publishing layout controls;
 - automated destructive image cropping;
 - printer-specific imposition, covers, spine, bleed or colour-management workflows;
@@ -227,14 +263,12 @@ These exclusions do not reduce completion of the fixed current-engine denominato
 
 ## Future product lanes
 
-Priority follows the strategic rule that Book System OS is currently a stronger **publishing engine** than **author-facing product**.
+Priority follows the strategic rule that Book System OS remains a stronger **publishing engine** than **author-facing product**, although Author Asset Workspace v0.1 closes the first concrete author-image workflow gap.
 
 The next authorised lanes are, in order:
 
-1. **Production preflight command** — commit the current production preflight as a tested, read-only repository command instead of relying on bespoke conversational shell blocks.
-2. **Author Asset Workspace v0.1** — author-facing image upload, preview, suitability/DPI/aspect feedback, controlled holder selection, alt text, caption/decorative semantics and intended-layout preview while retaining holder Markdown as canonical internal representation.
-3. **Real-book acceptance** — run a substantial real manuscript with real images through exact-source, four-format, BOS-RDY-001 and genuine human artifact inspection gates.
-4. **Paid External Book Production Proof (#71)** — use one real external author/manuscript to measure preparation, failures, manual intervention, support, production/delivery time, four-format outcome and payment/refusal evidence before choosing a business model.
+1. **Real-book acceptance** — run a substantial real manuscript with real images through exact-source, four-format, BOS-RDY-001 and genuine human artifact inspection gates.
+2. **Paid External Book Production Proof (#71)** — use one real external author/manuscript to measure preparation, failures, manual intervention, support, production/delivery time, four-format outcome and payment/refusal evidence before choosing a business model.
 
 No billing/SaaS build or wider public gateway is authorised by this contract.
 
@@ -259,15 +293,17 @@ This contract has a fixed **12-gate current-engine denominator**. It measures im
 
 At the production baseline established on 2026-08-09, these twelve current-engine gates are implemented and accepted: **12/12 — 100% of Current Product Contract v1**.
 
-That statement is deliberately scoped. It means:
+Author Asset Workspace v0.1 is a later product extension outside that fixed historical denominator. Its implementation and acceptance are tracked independently; adding it does not turn 12/12 into a moving percentage.
 
-> The current implemented Book System OS publishing-engine contract is complete.
+That 12/12 statement is deliberately scoped. It means:
+
+> The fixed current implemented Book System OS publishing-engine contract is complete.
 
 It does **not** mean:
 
 - the historical v0.1 denominator changed;
 - the wider Book System OS is complete;
-- the author-facing product gap is closed;
+- all author-facing product gaps are closed;
 - a real book is publication-ready or print-ready;
 - the external commercial model is proven.
 

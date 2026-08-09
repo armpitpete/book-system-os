@@ -8,6 +8,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from app.services.author_assets import (
+    check_persistent_job_admission,
+    copy_author_assets_to_input,
+    referenced_author_asset_bytes,
+    referenced_author_assets,
+)
 from app.services.provenance import (
     ControlledSourceRecord,
     ProvenanceError,
@@ -322,32 +328,48 @@ def create_job(
     control_record: Mapping[str, Any] | ControlledSourceRecord | None = None,
 ) -> tuple[str, Path]:
     source_identity = build_source_identity(markdown, control_record)
-    check_job_admission(markdown)
+    asset_records = referenced_author_assets(markdown)
+    asset_bytes = referenced_author_asset_bytes(asset_records)
+    check_job_admission(markdown, additional_bytes=asset_bytes)
+    check_persistent_job_admission(markdown, additional_bytes=asset_bytes)
 
     job_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     job_dir = jobs_dir() / job_id
-    (job_dir / "input").mkdir(parents=True, exist_ok=False)
+    input_dir = job_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=False)
     (job_dir / "work").mkdir(parents=True, exist_ok=True)
     (job_dir / "output").mkdir(parents=True, exist_ok=True)
     (job_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-    meta = {
-        "job_id": job_id,
-        "title": title.strip() or "Untitled",
-        "slug": slugify_title(title),
-        "created_at": utc_now(),
-        "source_identity": source_identity,
-    }
-    atomic_write_json(job_dir / "metadata.json", meta)
-    (job_dir / "input" / "book.md").write_bytes(markdown.encode("utf-8"))
-    write_status(job_dir, status="queued", step="waiting", message="Job queued", state=state)
-    append_job_event(
-        job_dir,
-        "created",
-        "Job queued",
-        state=normalise_job_state(state),
-        status="queued",
-    )
+    try:
+        asset_provenance = copy_author_assets_to_input(
+            asset_records,
+            input_dir=input_dir,
+        )
+        meta = {
+            "job_id": job_id,
+            "title": title.strip() or "Untitled",
+            "slug": slugify_title(title),
+            "created_at": utc_now(),
+            "source_identity": source_identity,
+            "author_assets": asset_provenance,
+        }
+        atomic_write_json(job_dir / "metadata.json", meta)
+        (input_dir / "book.md").write_bytes(markdown.encode("utf-8"))
+        write_status(job_dir, status="queued", step="waiting", message="Job queued", state=state)
+        append_job_event(
+            job_dir,
+            "created",
+            "Job queued",
+            state=normalise_job_state(state),
+            status="queued",
+            author_asset_count=len(asset_provenance),
+            author_asset_bytes=asset_bytes,
+        )
+    except Exception:
+        if job_dir.exists():
+            shutil.rmtree(job_dir)
+        raise
     return job_id, job_dir
 
 

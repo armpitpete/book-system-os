@@ -18,6 +18,7 @@ def _root(tmp_path: Path, *, secret: str = "release-secret-value") -> Path:
     root = tmp_path / "book-system"
     (root / "books" / "jobs").mkdir(parents=True)
     (root / "books" / "revisions").mkdir(parents=True)
+    (root / "books" / "assets").mkdir(parents=True)
     (root / "logs").mkdir(parents=True)
     (root / "config").mkdir(parents=True)
     (root / "config" / "env").write_text(
@@ -29,21 +30,29 @@ def _root(tmp_path: Path, *, secret: str = "release-secret-value") -> Path:
     return root
 
 
-def test_revision_store_is_ignored_but_anchor_is_tracked() -> None:
-    ignored = subprocess.run(
-        ["git", "-C", str(REPO), "check-ignore", "-q", "books/revisions/probe/current.json"],
-        check=False,
-    )
-    assert ignored.returncode == 0
-    anchor = subprocess.run(
-        ["git", "-C", str(REPO), "check-ignore", "-q", "books/revisions/.gitkeep"],
-        check=False,
-    )
-    assert anchor.returncode == 1
-    assert (REPO / "books" / "revisions" / ".gitkeep").is_file()
+def test_persistent_stores_are_ignored_but_anchors_are_tracked() -> None:
+    for relative in (
+        "books/revisions/probe/current.json",
+        "books/assets/0123456789abcdef0123456789abcdef/source.png",
+    ):
+        ignored = subprocess.run(
+            ["git", "-C", str(REPO), "check-ignore", "-q", relative],
+            check=False,
+        )
+        assert ignored.returncode == 0
+
+    for relative in ("books/revisions/.gitkeep", "books/assets/.gitkeep"):
+        anchor = subprocess.run(
+            ["git", "-C", str(REPO), "check-ignore", "-q", relative],
+            check=False,
+        )
+        assert anchor.returncode == 1
+        assert (REPO / relative).is_file()
 
 
-def test_persistent_backup_round_trip_includes_revision_studio(tmp_path: Path) -> None:
+def test_persistent_backup_round_trip_includes_revision_studio_and_author_assets(
+    tmp_path: Path,
+) -> None:
     root = _root(tmp_path)
     revisions = root / "books" / "revisions"
     created = create_document(
@@ -54,6 +63,22 @@ def test_persistent_backup_round_trip_includes_revision_studio(tmp_path: Path) -
         authority_ref="test:accepted",
         root=revisions,
     )
+
+    asset = root / "books" / "assets" / "0123456789abcdef0123456789abcdef"
+    asset.mkdir()
+    (asset / "source.png").write_bytes(b"author-image-bytes")
+    (asset / "metadata.json").write_text(
+        json.dumps(
+            {
+                "asset_id": "0123456789abcdef0123456789abcdef",
+                "stored_filename": "source.png",
+                "sha256": "fixture",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     archive = tmp_path / "persistent.tar.gz"
     completed = subprocess.run(
         ["bash", str(BACKUP), "--root", str(root), str(archive)],
@@ -65,6 +90,7 @@ def test_persistent_backup_round_trip_includes_revision_studio(tmp_path: Path) -
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "persistent-backup=pass" in completed.stdout
     assert "persistent-backup-revision-restore=pass" in completed.stdout
+    assert "persistent-backup-author-assets-restore=pass" in completed.stdout
 
     restored = tmp_path / "restored"
     verified = subprocess.run(
@@ -89,6 +115,13 @@ def test_persistent_backup_round_trip_includes_revision_studio(tmp_path: Path) -
         / created["content_path"]
     ).read_text(encoding="utf-8")
     assert restored_markdown == "# Chapter Seven\n\nRetained manuscript.\n"
+    assert (
+        restored
+        / "books"
+        / "assets"
+        / "0123456789abcdef0123456789abcdef"
+        / "source.png"
+    ).read_bytes() == b"author-image-bytes"
 
     metadata_extract = tmp_path / "metadata"
     metadata_extract.mkdir()
@@ -110,7 +143,8 @@ def test_persistent_backup_round_trip_includes_revision_studio(tmp_path: Path) -
         )
     )
     assert "books/revisions" in metadata["included"]
-    assert metadata["persistent_state_extension"] == 1
+    assert "books/assets" in metadata["included"]
+    assert metadata["persistent_state_extension"] == 2
 
 
 def test_persistent_backup_rejects_configured_secret_in_revision_state(

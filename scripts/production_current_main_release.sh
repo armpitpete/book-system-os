@@ -236,7 +236,8 @@ chmod 0600 "$EVIDENCE_ROOT/current-main-live.log"
 [[ "$live_status" -eq 0 ]] || fail "Current-main live acceptance failed"
 
 set +e
-env PATH="/opt/book-system-runtime/pandoc/current/bin:$PATH" \
+env BOOK_SYSTEM_ROOT="$REPO_ROOT" \
+  PATH="/opt/book-system-runtime/pandoc/current/bin:$PATH" \
   "$python_bin" "$REPO_ROOT/scripts/image_holder_live_acceptance.py" \
     --repo-root "$REPO_ROOT" \
     --expected-commit "$TARGET_COMMIT" \
@@ -266,6 +267,7 @@ runtime_requirements_reconciled=pass
 base_corpus_release=pass
 current_main_live_acceptance=pass
 image_holder_live_acceptance=pass
+image_holder_rendering_v0_2_live_acceptance=pass
 revision_persistent_state_unchanged=true
 actual_book_readiness_claimed=false
 EOF
@@ -276,6 +278,7 @@ printf 'Expected before: %s\n' "$EXPECTED_BEFORE"
 printf 'Deployed commit: %s\n' "$TARGET_COMMIT"
 printf 'Runtime requirements reconciled: true\n'
 printf 'Image-holder live acceptance: pass\n'
+printf 'Image-holder rendering v0.2 live acceptance: pass\n'
 printf 'Revision persistent state unchanged: true\n'
 printf 'Actual book readiness claimed: false\n'
 printf 'Evidence: %s\n' "$EVIDENCE_ROOT"

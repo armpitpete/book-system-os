@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from app.services.author_assets import (
+    check_persistent_job_admission,
     copy_author_assets_to_input,
     referenced_author_asset_bytes,
     referenced_author_assets,
@@ -330,6 +331,7 @@ def create_job(
     asset_records = referenced_author_assets(markdown)
     asset_bytes = referenced_author_asset_bytes(asset_records)
     check_job_admission(markdown, additional_bytes=asset_bytes)
+    check_persistent_job_admission(markdown, additional_bytes=asset_bytes)
 
     job_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     job_dir = jobs_dir() / job_id

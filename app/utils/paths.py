@@ -14,6 +14,12 @@ def repo_root() -> Path:
     return Path(os.getenv("BOOK_SYSTEM_ROOT", Path.cwd())).resolve()
 
 
+def code_root() -> Path:
+    """Return the installed source tree containing app/, filters/ and scripts/."""
+
+    return Path(__file__).resolve().parents[2]
+
+
 def jobs_dir() -> Path:
     path = repo_root() / "books" / "jobs"
     path.mkdir(parents=True, exist_ok=True)
@@ -28,3 +34,10 @@ def logs_dir() -> Path:
 
 def templates_dir() -> Path:
     return repo_root() / "templates"
+
+
+def filters_dir() -> Path:
+    # Rendering filters are versioned executable source, not mutable job data.
+    # Resolve them from the installed code tree so test/storage roots cannot
+    # redirect production rendering semantics.
+    return code_root() / "filters"

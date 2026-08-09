@@ -8,6 +8,7 @@ CANDIDATE_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 BASE_LAUNCHER="$CANDIDATE_ROOT/scripts/production_corpus_runtime_release_configured.sh"
 BACKUP_LAUNCHER="$CANDIDATE_ROOT/scripts/backup_persistent_state.sh"
 LIVE_ACCEPTANCE="$CANDIDATE_ROOT/scripts/current_main_live_acceptance.py"
+AUTHOR_ASSET_ACCEPTANCE="$CANDIDATE_ROOT/scripts/author_asset_live_acceptance.py"
 REQUIREMENTS_RECONCILER="$CANDIDATE_ROOT/scripts/reconcile_runtime_requirements.py"
 IMAGE_HOLDER_ACCEPTANCE="$CANDIDATE_ROOT/scripts/image_holder_live_acceptance.py"
 REPO_ROOT="/opt/book-system"
@@ -139,6 +140,7 @@ for path in \
   "$BASE_LAUNCHER" \
   "$BACKUP_LAUNCHER" \
   "$LIVE_ACCEPTANCE" \
+  "$AUTHOR_ASSET_ACCEPTANCE" \
   "$REQUIREMENTS_RECONCILER" \
   "$IMAGE_HOLDER_ACCEPTANCE"; do
   [[ -f "$path" ]] || fail "Required reviewed release component is unavailable: $path"
@@ -249,6 +251,19 @@ chmod 0600 "$EVIDENCE_ROOT/current-main-live.log"
 [[ "$live_status" -eq 0 ]] || fail "Current-main live acceptance failed"
 
 set +e
+"$python_bin" "$REPO_ROOT/scripts/author_asset_live_acceptance.py" \
+  --repo-root "$REPO_ROOT" \
+  --env-file "$ENV_FILE" \
+  --expected-commit "$TARGET_COMMIT" \
+  --public-base-url "$PUBLIC_BASE_URL" \
+  --evidence-dir "$EVIDENCE_ROOT/author-asset-live" \
+  2>&1 | tee "$EVIDENCE_ROOT/author-asset-live.log"
+author_asset_status=${PIPESTATUS[0]}
+set -e
+chmod 0600 "$EVIDENCE_ROOT/author-asset-live.log"
+[[ "$author_asset_status" -eq 0 ]] || fail "Author Asset Workspace live acceptance failed"
+
+set +e
 env BOOK_SYSTEM_ROOT="$REPO_ROOT" \
   PATH="/opt/book-system-runtime/pandoc/current/bin:$PATH" \
   "$python_bin" "$REPO_ROOT/scripts/image_holder_live_acceptance.py" \
@@ -287,6 +302,7 @@ predeploy_persistent_backup=pass
 runtime_requirements_reconciled=pass
 base_corpus_release=pass
 current_main_live_acceptance=pass
+author_asset_workspace_v0_1_live_acceptance=pass
 image_holder_live_acceptance=pass
 image_holder_rendering_v0_2_live_acceptance=pass
 revision_persistent_state_unchanged=true
@@ -299,6 +315,7 @@ printf '\nCURRENT MAIN RELEASE — PASS\n'
 printf 'Expected before: %s\n' "$EXPECTED_BEFORE"
 printf 'Deployed commit: %s\n' "$TARGET_COMMIT"
 printf 'Runtime requirements reconciled: true\n'
+printf 'Author Asset Workspace v0.1 live acceptance: pass\n'
 printf 'Image-holder live acceptance: pass\n'
 printf 'Image-holder rendering v0.2 live acceptance: pass\n'
 printf 'Revision persistent state unchanged: true\n'

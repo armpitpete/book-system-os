@@ -104,6 +104,28 @@ def selected_max_total_storage(env_file: Path) -> tuple[int, str]:
     return value, "config"
 
 
+def check_release_contract(candidate_root: Path) -> dict[str, str]:
+    wrapper = candidate_root / "scripts" / "production_current_main_release.sh"
+    acceptance = candidate_root / "scripts" / "author_asset_live_acceptance.py"
+    for path, label in ((wrapper, "release wrapper"), (acceptance, "live acceptance")):
+        if path.is_symlink() or not path.is_file():
+            fail(f"Author Asset {label} is unavailable or unsafe")
+    wrapper_text = wrapper.read_text(encoding="utf-8")
+    required = (
+        "author_asset_live_acceptance.py",
+        "Author Asset Workspace live acceptance failed",
+        "author_asset_workspace_v0_1_live_acceptance=pass",
+        "actual_book_readiness_claimed=false",
+    )
+    if any(marker not in wrapper_text for marker in required):
+        fail("Author Asset release acceptance contract is incomplete")
+    return {
+        "release_wrapper_sha256": sha256_file(wrapper),
+        "live_acceptance_sha256": sha256_file(acceptance),
+        "contract": "pass",
+    }
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -123,6 +145,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    candidate_root = Path(__file__).resolve().parents[1]
     repo_root = args.repo_root.resolve()
     assets_root = repo_root / "books" / "assets"
     jobs_root = repo_root / "books" / "jobs"
@@ -131,6 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     combined = tree_bytes(jobs_root) + int(observed["bytes"])
     if combined > maximum:
         fail("retained jobs and author assets exceed configured total storage limit")
+    release_contract = check_release_contract(candidate_root)
 
     if args.phase == "before":
         write_json(
@@ -140,6 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "combined_retained_bytes": combined,
                 "maximum_retained_bytes": maximum,
                 "maximum_retained_bytes_source": source,
+                "release_contract": release_contract,
             },
         )
         return 0
@@ -152,6 +177,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         fail(f"author-asset preflight baseline is invalid: {type(exc).__name__}")
     if not isinstance(before, dict) or before.get("author_assets") != observed:
         fail("Author Asset Workspace persistent state changed during preflight")
+    if before.get("release_contract") != release_contract:
+        fail("Author Asset release acceptance contract changed during preflight")
 
     result = {
         "status": "PASS",
@@ -159,6 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "combined_retained_bytes": combined,
         "maximum_retained_bytes": maximum,
         "maximum_retained_bytes_source": source,
+        "release_contract": release_contract,
         "author_asset_persistent_state_unchanged": True,
     }
     if args.evidence_dir:
@@ -170,9 +198,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result_path.is_file():
             with result_path.open("a", encoding="utf-8") as handle:
                 handle.write("author_asset_persistent_state_unchanged=true\n")
+                handle.write("author_asset_release_acceptance_contract=pass\n")
             result_path.chmod(0o600)
 
     print("author-asset-persistent-state-unchanged=true")
+    print("author-asset-release-acceptance-contract=pass")
     print(f"author-assets-digest={observed['digest']}")
     print(f"author-assets-bytes={observed['bytes']}")
     print(f"combined-retained-bytes={combined}")

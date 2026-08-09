@@ -151,7 +151,9 @@ def snapshot_tree(root: Path, *, skip_gitkeep: bool = False) -> TreeSnapshot:
             if skip_gitkeep and name == ".gitkeep":
                 continue
             path = current / name
-            if path.is_symlink() or not path.is_file():
+            if path.is_symlink():
+                fail(f"retained-state symlink is not allowed: {path}")
+            if not path.is_file():
                 fail(f"unsafe retained-state entry: {path}")
             st = path.stat()
             byte_count += st.st_size

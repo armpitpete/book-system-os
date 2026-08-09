@@ -14,6 +14,7 @@ from app.services.author_assets import (
     canonical_holder_markdown,
     holder_assessments,
     load_author_asset,
+    persistent_storage_bytes,
     store_author_asset,
 )
 from app.services.job_queue import create_job
@@ -202,3 +203,32 @@ def test_job_admission_counts_referenced_workspace_asset_bytes(
         create_job(title="Asset book", markdown=manuscript, state="test")
     assert exc_info.value.code == "job-storage-reservation-exceeded"
     assert exc_info.value.actual == base_reservation + int(record["bytes"])
+
+
+def test_job_admission_counts_existing_workspace_state_in_total_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = store_author_asset(
+        filename="bridge.png",
+        content=image_bytes(width=2200, height=1400),
+    )
+    markup = canonical_holder_markdown(
+        record["asset_id"],
+        holder_name="inline",
+        alt_text="A stone bridge",
+    )
+    manuscript = f"# Book\n\n{markup}\n"
+    reservation = new_job_reservation_bytes(
+        manuscript,
+        additional_bytes=int(record["bytes"]),
+    )
+    current_persistent = persistent_storage_bytes()
+    monkeypatch.setenv(
+        "BOOK_MAX_TOTAL_STORAGE_BYTES",
+        str(current_persistent + reservation - 1),
+    )
+
+    with pytest.raises(ResourceLimitError) as exc_info:
+        create_job(title="Asset book", markdown=manuscript, state="test")
+    assert exc_info.value.code == "total-storage-capacity-reached"
+    assert exc_info.value.actual == current_persistent + reservation

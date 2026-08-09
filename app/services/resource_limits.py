@@ -173,11 +173,15 @@ def active_job_count() -> int:
     return count
 
 
-def new_job_reservation_bytes(markdown: str) -> int:
-    return len(markdown.encode("utf-8")) + NEW_JOB_OVERHEAD_BYTES
+def new_job_reservation_bytes(markdown: str, *, additional_bytes: int = 0) -> int:
+    return (
+        len(markdown.encode("utf-8"))
+        + NEW_JOB_OVERHEAD_BYTES
+        + max(0, int(additional_bytes))
+    )
 
 
-def check_job_admission(markdown: str) -> None:
+def check_job_admission(markdown: str, *, additional_bytes: int = 0) -> None:
     manuscript_size = len(markdown.encode("utf-8"))
     manuscript_limit = max_manuscript_bytes()
     if manuscript_size > manuscript_limit:
@@ -200,11 +204,14 @@ def check_job_admission(markdown: str) -> None:
             actual=active,
         )
 
-    reservation = new_job_reservation_bytes(markdown)
+    reservation = new_job_reservation_bytes(
+        markdown,
+        additional_bytes=additional_bytes,
+    )
     job_limit = max_job_bytes()
     if reservation > job_limit:
         raise ResourceLimitError(
-            "The manuscript plus required job-record reserve exceeds the per-job limit",
+            "The manuscript, referenced assets and required job-record reserve exceed the per-job limit",
             code="job-storage-reservation-exceeded",
             status_code=413,
             limit=job_limit,

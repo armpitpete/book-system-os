@@ -222,19 +222,27 @@ TLS certificate paths in the example must be replaced with the server's real cer
 
 Production release is an exact-state operation, not an instruction to pull whatever is newest.
 
-The current protected release wrapper is:
+Before deployment authorisation, run the repository-owned read-only preflight from a clean candidate worktree at the exact target:
+
+```text
+scripts/production_current_main_preflight.sh
+```
+
+It requires exact full-SHA `--expected-before` and `--target-commit` arguments, generates protected evidence, and always leaves `deployment-authorized=false`. See `docs/PRODUCTION_CURRENT_MAIN_PREFLIGHT.md` for its complete evidence and non-mutation contract.
+
+After a successful preflight and separate explicit authorisation for that exact SHA pair, the protected release wrapper is:
 
 ```text
 scripts/production_current_main_release.sh
 ```
 
-It is run from a clean detached worktree at the exact reviewed target and requires explicit full-SHA values for:
+The release wrapper is also run from a clean detached worktree at the exact reviewed target and requires:
 
 - `--expected-before`
 - `--target-commit`
 - `--confirm "DEPLOY <target>"`
 
-A fresh production preflight must bind the actual production predecessor to the exact target before deployment authority is granted. See `docs/operator-admin-manual.md` and the current release issue/evidence for the full protected procedure.
+Do not silently substitute another predecessor or target. Preflight, authorisation, deployment, live acceptance and human artifact acceptance remain separate gates.
 
 ## Local checks
 
@@ -246,9 +254,9 @@ python3 -m pytest -q
 
 The real export integration test requires `pandoc` and `xelatex`. CI installs both and must generate non-empty standard PDF, ND PDF, EPUB and DOCX outputs.
 
-## Operator manual
+## Operator guidance
 
-See `docs/operator-admin-manual.md` for deployment, retry, cleanup and stop rules.
+See `docs/PRODUCTION_CURRENT_MAIN_PREFLIGHT.md` for protected preflight/release entrypoints. See `docs/operator-admin-manual.md` for job retry, cleanup, recovery, resource limits and general service checks.
 
 <!-- AUTO:PROJECT-COMPLETION:START -->
 ## Completion

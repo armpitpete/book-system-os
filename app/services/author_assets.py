@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import os
 import re
 import shutil
+import uuid
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import uuid
 
 from PIL import Image, UnidentifiedImageError
 
@@ -24,6 +23,7 @@ from app.services.resource_limits import (
     ResourceLimitError,
     max_job_bytes,
     max_total_storage_bytes,
+    new_job_reservation_bytes,
     path_size_bytes,
 )
 from app.utils.atomic_files import atomic_write_json
@@ -113,6 +113,10 @@ def _inspect_image(path: Path) -> dict[str, Any]:
     }
 
 
+def persistent_storage_bytes() -> int:
+    return path_size_bytes(jobs_dir()) + path_size_bytes(author_assets_dir())
+
+
 def check_asset_storage_admission(asset_bytes: int) -> None:
     size = int(asset_bytes)
     if size <= 0:
@@ -128,12 +132,28 @@ def check_asset_storage_admission(asset_bytes: int) -> None:
             actual=size,
         )
 
-    retained = path_size_bytes(jobs_dir()) + path_size_bytes(author_assets_dir())
     total_limit = max_total_storage_bytes()
-    projected = retained + size
+    projected = persistent_storage_bytes() + size
     if projected > total_limit:
         raise ResourceLimitError(
             "Retained jobs and author assets cannot admit this image safely",
+            code="total-storage-capacity-reached",
+            status_code=507,
+            limit=total_limit,
+            actual=projected,
+        )
+
+
+def check_persistent_job_admission(markdown: str, *, additional_bytes: int = 0) -> None:
+    reservation = new_job_reservation_bytes(
+        markdown,
+        additional_bytes=additional_bytes,
+    )
+    total_limit = max_total_storage_bytes()
+    projected = persistent_storage_bytes() + reservation
+    if projected > total_limit:
+        raise ResourceLimitError(
+            "Retained jobs and author assets cannot admit another job safely",
             code="total-storage-capacity-reached",
             status_code=507,
             limit=total_limit,
@@ -224,7 +244,9 @@ def load_author_asset(asset_id: str, *, verify_hash: bool = False) -> dict[str, 
     source_path = directory / stored_filename
     if source_path.is_symlink() or not source_path.is_file():
         raise AuthorAssetError(
-            "Author asset image is unavailable.", code="asset-file-unavailable", status_code=500
+            "Author asset image is unavailable.",
+            code="asset-file-unavailable",
+            status_code=500,
         )
     if verify_hash and sha256_file(source_path) != str(record.get("sha256", "")):
         raise AuthorAssetError(
@@ -323,11 +345,22 @@ def holder_semantics(holder_name: str) -> str:
 
 
 def _escape_markdown_alt(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]").replace("\n", " ").replace("\r", " ")
+    return (
+        value.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
 
 
 def _escape_attribute(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").replace("\r", " ")
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
 
 
 def canonical_holder_markdown(

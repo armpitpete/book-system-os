@@ -4,7 +4,7 @@ import html
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from app.api.auth import dashboard_auth
 from app.api.ui import csrf_field, page
@@ -214,8 +214,8 @@ def asset_workspace() -> HTMLResponse:
     )
 
 
-@router.post("/assets")
-async def upload_asset(image: UploadFile = File(...)) -> HTMLResponse | RedirectResponse:
+@router.post("/assets", response_model=None)
+async def upload_asset(image: UploadFile = File(...)) -> Response:
     try:
         content = await image.read()
         record = store_author_asset(filename=image.filename, content=content)
@@ -280,8 +280,8 @@ def configure_asset(
         return response
 
 
-@router.get("/assets/{asset_id}/preview")
-def preview_asset(asset_id: str) -> FileResponse | HTMLResponse:
+@router.get("/assets/{asset_id}/preview", response_model=None)
+def preview_asset(asset_id: str) -> Response:
     try:
         record = load_author_asset(asset_id)
         path = author_asset_path(asset_id)

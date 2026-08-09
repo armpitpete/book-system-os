@@ -27,6 +27,7 @@ DEFAULT_ENV_FILE = Path("/opt/book-system/config/env")
 DEFAULT_RELEASE_PARENT = Path("/var/tmp")
 DEFAULT_EVIDENCE_PARENT = Path("/var/log/book-system")
 READINESS_MIN_FREE_DEFAULT = 536_870_912
+MAX_TOTAL_STORAGE_DEFAULT = 10 * 1024 * 1024 * 1024
 ENV_KEYS = {
     "BOOK_BIND_PORT",
     "BOOK_READINESS_MIN_FREE_BYTES",
@@ -539,7 +540,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_free = positive_int(
             values, "BOOK_READINESS_MIN_FREE_BYTES", READINESS_MIN_FREE_DEFAULT
         )
-        max_storage = positive_int(values, "BOOK_MAX_TOTAL_STORAGE_BYTES")
+        max_storage = positive_int(
+            values, "BOOK_MAX_TOTAL_STORAGE_BYTES", MAX_TOTAL_STORAGE_DEFAULT
+        )
         if disk.free < min_free:
             fail("production disk free space is below readiness minimum")
         if jobs_before.bytes > max_storage:
@@ -549,6 +552,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "minimum_free_bytes": min_free,
             "retained_job_bytes": jobs_before.bytes,
             "maximum_retained_bytes": max_storage,
+            "maximum_retained_bytes_source": (
+                "config"
+                if "BOOK_MAX_TOTAL_STORAGE_BYTES" in values
+                else "runtime-default"
+            ),
         }
 
         report["checks"]["release_worktree"] = check_var_tmp(

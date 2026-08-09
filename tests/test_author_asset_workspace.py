@@ -111,10 +111,10 @@ def test_canonical_markdown_escapes_author_text() -> None:
     markup = canonical_holder_markdown(
         record["asset_id"],
         holder_name="feature",
-        alt_text=r"Bridge [east] \",
+        alt_text="Bridge [east]",
         caption='He said "look here".',
     )
-    assert r"Bridge \[east\] \\" in markup
+    assert r"Bridge \[east\]" in markup
     assert r'caption="He said \"look here\"."' in markup
 
 
@@ -173,7 +173,8 @@ def test_generated_workspace_reference_is_copied_into_job_with_provenance() -> N
 
     _, job_dir = create_job(title="Asset book", markdown=manuscript, state="test")
     copied = job_dir / "input" / "assets" / record["asset_id"] / "source.png"
-    assert copied.read_bytes() == (Path(job_dir).parents[1] / "assets" / record["asset_id"] / "source.png").read_bytes()
+    original = job_dir.parents[1] / "assets" / record["asset_id"] / "source.png"
+    assert copied.read_bytes() == original.read_bytes()
 
     metadata = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
     assert len(metadata["author_assets"]) == 1

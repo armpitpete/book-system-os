@@ -8,9 +8,9 @@ usage() {
 Usage: bash scripts/backup_persistent_state.sh [--root PATH] ARCHIVE.tar.gz
 
 Create a validated Book System OS persistent-state backup.
-This reuses the established job-store backup, adds Revision Studio durable state,
-reruns secret scanning, validates the combined archive, and performs a clean
-restore rehearsal before publishing the requested archive.
+This reuses the established job-store backup, adds Revision Studio and Author
+Asset Workspace durable state, reruns secret scanning, validates the combined
+archive, and performs a clean restore rehearsal before publishing the archive.
 EOF
 }
 
@@ -81,16 +81,13 @@ from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
 staging = Path(sys.argv[2]).resolve()
-source = root / "books" / "revisions"
-destination = staging / "books" / "revisions"
-destination.mkdir(parents=True, exist_ok=True)
 
 
-def reject_unsafe_tree(path: Path) -> None:
+def reject_unsafe_tree(path: Path, label: str) -> None:
     if not path.exists():
         return
     if path.is_symlink() or not path.is_dir():
-        raise SystemExit(f"persistent-backup=fail: invalid revision store: {path}")
+        raise SystemExit(f"persistent-backup=fail: invalid {label} store: {path}")
     for current_root, directories, files in os.walk(path, followlinks=False):
         current = Path(current_root)
         for name in [*directories, *files]:
@@ -102,18 +99,27 @@ def reject_unsafe_tree(path: Path) -> None:
                 )
             if not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
                 raise SystemExit(
-                    f"persistent-backup=fail: unsupported revision-store entry: {candidate}"
+                    f"persistent-backup=fail: unsupported {label}-store entry: {candidate}"
                 )
 
 
-reject_unsafe_tree(source)
-if source.is_dir():
-    shutil.copytree(
-        source,
-        destination,
-        dirs_exist_ok=True,
-        copy_function=shutil.copy2,
-    )
+def copy_persistent_tree(relative: str, label: str) -> Path:
+    source = root / relative
+    destination = staging / relative
+    destination.mkdir(parents=True, exist_ok=True)
+    reject_unsafe_tree(source, label)
+    if source.is_dir():
+        shutil.copytree(
+            source,
+            destination,
+            dirs_exist_ok=True,
+            copy_function=shutil.copy2,
+        )
+    return destination
+
+
+revision_destination = copy_persistent_tree("books/revisions", "revision")
+asset_destination = copy_persistent_tree("books/assets", "author-asset")
 
 metadata_path = staging / "backup-metadata.json"
 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -122,10 +128,11 @@ if not isinstance(metadata, dict):
 included = metadata.get("included")
 if not isinstance(included, list):
     raise SystemExit("persistent-backup=fail: backup metadata included list is invalid")
-if "books/revisions" not in included:
-    included.append("books/revisions")
+for relative in ("books/revisions", "books/assets"):
+    if relative not in included:
+        included.append(relative)
 metadata["included"] = included
-metadata["persistent_state_extension"] = 1
+metadata["persistent_state_extension"] = 2
 metadata_path.write_text(
     json.dumps(metadata, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
@@ -173,9 +180,17 @@ if secret_values:
                 tail = window[-(longest - 1):] if longest > 1 else b""
 
 revision_files = sum(
-    1 for path in destination.rglob("*") if path.is_file() and path.name != ".gitkeep"
+    1
+    for path in revision_destination.rglob("*")
+    if path.is_file() and path.name != ".gitkeep"
+)
+asset_files = sum(
+    1
+    for path in asset_destination.rglob("*")
+    if path.is_file() and path.name != ".gitkeep"
 )
 print(f"persistent-backup-revision-files={revision_files}")
+print(f"persistent-backup-author-asset-files={asset_files}")
 print("persistent-backup-secret-scan=pass")
 PY
 
@@ -184,7 +199,7 @@ chmod 0600 "$PARTIAL"
 python3 "$SCRIPT_DIR/validate_backup.py" "$PARTIAL"
 python3 "$SCRIPT_DIR/validate_backup.py" "$PARTIAL" --restore-root "$RESTORE_ROOT"
 
-python3 - "$ROOT/books/revisions" "$RESTORE_ROOT/books/revisions" <<'PY'
+python3 - "$ROOT" "$RESTORE_ROOT" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -194,18 +209,20 @@ import sys
 from pathlib import Path
 
 
-def snapshot(root: Path) -> list[tuple[str, str, int, str | None]]:
+def snapshot(root: Path, label: str) -> list[tuple[str, str, int, str | None]]:
     if not root.exists():
         return []
     if root.is_symlink() or not root.is_dir():
-        raise SystemExit(f"persistent-backup=fail: invalid revision root: {root}")
+        raise SystemExit(f"persistent-backup=fail: invalid {label} root: {root}")
     result: list[tuple[str, str, int, str | None]] = []
     for current_root, directories, files in os.walk(root, followlinks=False):
         current = Path(current_root)
         for name in sorted(directories):
             path = current / name
             if path.is_symlink():
-                raise SystemExit(f"persistent-backup=fail: symlink in revision root: {path}")
+                raise SystemExit(
+                    f"persistent-backup=fail: symlink in {label} root: {path}"
+                )
             relative = path.relative_to(root).as_posix()
             result.append((relative, "directory", stat.S_IMODE(path.stat().st_mode), None))
         for name in sorted(files):
@@ -213,17 +230,35 @@ def snapshot(root: Path) -> list[tuple[str, str, int, str | None]]:
                 continue
             path = current / name
             if path.is_symlink() or not path.is_file():
-                raise SystemExit(f"persistent-backup=fail: unsafe revision file: {path}")
+                raise SystemExit(
+                    f"persistent-backup=fail: unsafe {label} file: {path}"
+                )
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             relative = path.relative_to(root).as_posix()
             result.append((relative, "file", stat.S_IMODE(path.stat().st_mode), digest))
     return sorted(result)
 
-source = snapshot(Path(sys.argv[1]))
-restored = snapshot(Path(sys.argv[2]))
-if source != restored:
-    raise SystemExit("persistent-backup=fail: restored Revision Studio state differs")
-print("persistent-backup-revision-restore=pass")
+
+def verify(relative: str, label: str, pass_marker: str) -> None:
+    source = snapshot(Path(sys.argv[1]) / relative, label)
+    restored = snapshot(Path(sys.argv[2]) / relative, label)
+    if source != restored:
+        raise SystemExit(
+            f"persistent-backup=fail: restored {label} state differs"
+        )
+    print(pass_marker)
+
+
+verify(
+    "books/revisions",
+    "Revision Studio",
+    "persistent-backup-revision-restore=pass",
+)
+verify(
+    "books/assets",
+    "Author Asset Workspace",
+    "persistent-backup-author-assets-restore=pass",
+)
 PY
 
 mv -- "$PARTIAL" "$ARCHIVE"

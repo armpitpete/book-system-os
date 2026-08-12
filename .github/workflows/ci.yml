@@ -27,6 +27,14 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      - name: Install exact export toolchain parser
+        run: |
+          bash scripts/install_pinned_pandoc.sh --runtime-root "$RUNNER_TEMP/book-system-pandoc"
+          echo "$RUNNER_TEMP/book-system-pandoc/current/bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/book-system-pandoc/current/bin:$PATH"
+          command -v pandoc
+          python scripts/check_runtime_compatibility.py --pandoc-only
+
       - name: Install Python dependencies
         run: python -m pip install -r requirements-dev.txt
 
@@ -38,7 +46,7 @@ jobs:
           find scripts -maxdepth 1 -type f -name '*.sh' -print0 \
             | xargs -0 -r -n1 bash -n
 
-      - name: Run tests that do not require the declared integration marker
+      - name: Run tests outside the declared full export integration lane
         env:
           BOOK_SYSTEM_ENV: test
         run: |

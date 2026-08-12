@@ -1,0 +1,100 @@
+name: Export regression
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/export-regression.yml'
+      - 'app/**'
+      - 'config/**'
+      - 'deploy/**'
+      - 'filters/**'
+      - 'scripts/**'
+      - 'templates/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'requirements-dev.txt'
+      - 'pytest.ini'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/export-regression.yml'
+      - 'app/**'
+      - 'config/**'
+      - 'deploy/**'
+      - 'filters/**'
+      - 'scripts/**'
+      - 'templates/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'requirements-dev.txt'
+      - 'pytest.ini'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: book-system-export-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  export-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install pinned Pandoc before expensive TeX setup
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if bash scripts/install_pinned_pandoc.sh --runtime-root "$RUNNER_TEMP/book-system-pandoc"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Pinned Pandoc installation failed after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
+          echo "$RUNNER_TEMP/book-system-pandoc/current/bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/book-system-pandoc/current/bin:$PATH"
+          command -v pandoc
+          python scripts/check_runtime_compatibility.py --pandoc-only
+
+      - name: Install XeLaTeX export dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-xetex texlive-latex-recommended texlive-fonts-recommended
+          command -v xelatex
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run complete regression suite with real export toolchain
+        env:
+          BOOK_SYSTEM_ENV: test
+          H08_ARTIFACT_DIR: artifacts/h08-representative
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python -m pytest -q 2>&1 | tee artifacts/pytest.log
+
+      - name: Upload H-08 evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: h08-regression-evidence
+          path: artifacts
+          if-no-files-found: ignore
+          retention-days: 14

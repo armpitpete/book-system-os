@@ -5,14 +5,21 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: book-system-core-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   stable-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
           cache: pip
@@ -20,15 +27,12 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Install exact export toolchain
+      - name: Install exact export toolchain parser
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl ca-certificates texlive-xetex texlive-latex-recommended texlive-fonts-recommended
           bash scripts/install_pinned_pandoc.sh --runtime-root "$RUNNER_TEMP/book-system-pandoc"
           echo "$RUNNER_TEMP/book-system-pandoc/current/bin" >> "$GITHUB_PATH"
           export PATH="$RUNNER_TEMP/book-system-pandoc/current/bin:$PATH"
           command -v pandoc
-          command -v xelatex
           python scripts/check_runtime_compatibility.py --pandoc-only
 
       - name: Install Python dependencies
@@ -42,20 +46,23 @@ jobs:
           find scripts -maxdepth 1 -type f -name '*.sh' -print0 \
             | xargs -0 -r -n1 bash -n
 
-      - name: Run stable-core tests
+      - name: Run tests outside the full export lane
         env:
           BOOK_SYSTEM_ENV: test
-          H08_ARTIFACT_DIR: artifacts/h08-representative
         run: |
           set -o pipefail
           mkdir -p artifacts
-          python -m pytest -q 2>&1 | tee artifacts/pytest.log
+          # This smoke test invokes the real four-format renderer and XeLaTeX.
+          # It remains covered by Export regression, which runs the complete suite.
+          python -m pytest -q -m 'not integration' \
+            --deselect tests/test_runtime_requirement_deployment.py::test_image_holder_runtime_smoke_uses_real_pipeline \
+            2>&1 | tee artifacts/pytest-core.log
 
-      - name: Upload H-08 evidence
-        if: always()
-        uses: actions/upload-artifact@v6
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: h08-regression-evidence
-          path: artifacts
+          name: stable-core-failure-evidence
+          path: artifacts/pytest-core.log
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7

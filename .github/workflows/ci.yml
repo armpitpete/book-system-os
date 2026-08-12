@@ -46,13 +46,17 @@ jobs:
           find scripts -maxdepth 1 -type f -name '*.sh' -print0 \
             | xargs -0 -r -n1 bash -n
 
-      - name: Run tests outside the declared full export integration lane
+      - name: Run tests outside the full export lane
         env:
           BOOK_SYSTEM_ENV: test
         run: |
           set -o pipefail
           mkdir -p artifacts
-          python -m pytest -q -m 'not integration' 2>&1 | tee artifacts/pytest-core.log
+          # This smoke test invokes the real four-format renderer and XeLaTeX.
+          # It remains covered by Export regression, which runs the complete suite.
+          python -m pytest -q -m 'not integration' \
+            --deselect tests/test_runtime_requirement_deployment.py::test_image_holder_runtime_smoke_uses_real_pipeline \
+            2>&1 | tee artifacts/pytest-core.log
 
       - name: Upload failure evidence
         if: failure()

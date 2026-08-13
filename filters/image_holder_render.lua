@@ -85,6 +85,13 @@ function Header(header)
   return header
 end
 
+function Pandoc(doc)
+  if FORMAT:match("latex") then
+    doc.blocks:insert(1, pandoc.RawBlock("latex", "\\pagestyle{plain}"))
+  end
+  return doc
+end
+
 function Image(image)
   local holder = holder_name(image)
   if holder == nil then

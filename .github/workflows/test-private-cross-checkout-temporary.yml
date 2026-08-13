@@ -1,0 +1,31 @@
+name: Temporary test private manuscript checkout
+
+on:
+  push:
+    branches:
+      - agent/final-real-book-human-artifacts
+
+permissions:
+  contents: read
+
+jobs:
+  test-cross-checkout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check out Book System
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          path: book-system
+      - name: Attempt exact private manuscript checkout with this repository token
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: armpitpete/a-book-for-neurodivergent-minds
+          ref: 4f5404641548e2b766e0bfbbf37aabb98ec475e8
+          path: manuscript
+          token: ${{ github.token }}
+      - name: Verify manuscript authority only
+        run: |
+          set -euo pipefail
+          test -f manuscript/manuscript-control.json
+          grep -F 'b2d1c746a5081c8b7e523d4381d694a06fc9ecd6081e647c6b3239688e721b0b' manuscript/manuscript-control.json

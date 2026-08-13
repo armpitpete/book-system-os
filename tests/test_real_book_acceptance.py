@@ -45,8 +45,9 @@ def prepare_complete_job(
     (job_dir / "manifest.json").write_text(
         json.dumps(
             {
-                "schema_version": "2",
+                "schema_version": "3",
                 "outputs": outputs,
+                "publishing_metadata": metadata["publishing_metadata"],
                 "source_identity": metadata["source_identity"],
                 "output_evidence": output_evidence,
             },
@@ -55,7 +56,11 @@ def prepare_complete_job(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(ar, "_production_config_sha256", lambda _kind: "a" * 64)
+    monkeypatch.setattr(
+        ar,
+        "_production_config_sha256",
+        lambda _kind, _metadata=None: "a" * 64,
+    )
     monkeypatch.setattr(ar, "_assets_sha256", lambda _job: "b" * 64)
     return job_dir
 

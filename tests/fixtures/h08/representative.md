@@ -41,6 +41,12 @@ This sentence carries a deterministic footnote.[^h08-note]
   - Return to the second level
 - Return to the first level
 
+## Fenced text
+
+```text
+Deterministic fenced text must render through the custom LaTeX templates.
+```
+
 \newpage
 
 #### Deliberately unusual heading depth

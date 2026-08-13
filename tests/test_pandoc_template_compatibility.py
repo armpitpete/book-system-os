@@ -24,3 +24,18 @@ def test_custom_latex_templates_define_official_pandocbounded_contract(
     ]
     for fragment in required_fragments:
         assert fragment in template
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    ["book-template-standard.tex", "book-template-nd.tex"],
+)
+def test_custom_latex_templates_include_pandoc_highlighting_macros(
+    template_name: str,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "templates" / template_name).read_text(encoding="utf-8")
+
+    assert "$if(highlighting-macros)$" in template
+    assert "$highlighting-macros$" in template
+    assert "$endif$" in template

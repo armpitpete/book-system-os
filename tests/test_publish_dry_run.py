@@ -146,6 +146,11 @@ def test_publish_dry_run_returns_authoritative_plan_without_retained_writes(
     assert payload["rendering_attempted"] is False
     assert payload["job_created"] is False
     assert payload["contract_version"] == "0.2"
+    assert payload["publishing_metadata"] == {
+        "schema_version": "1",
+        "title": "Dry Run",
+        "language": None,
+    }
     assert job_directories(tmp_path) == []
     assert persistent_files(tmp_path) == files_before
     assert persistent_directories(tmp_path) == directories_before

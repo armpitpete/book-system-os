@@ -92,7 +92,11 @@ def test_successful_book_check_is_side_effect_free_and_offers_builds(
 
     response = client.post(
         "/check-form",
-        data={"title": "Real Book", "content": "# Real Book\n\nText."},
+        data={
+            "title": "Real Book",
+            "language": "en-GB",
+            "content": "# Real Book\n\nText.",
+        },
     )
 
     assert response.status_code == 200
@@ -104,6 +108,7 @@ def test_successful_book_check_is_side_effect_free_and_offers_builds(
     assert "book.docx" in response.text
     assert "Queue test build" in response.text
     assert "Queue real book build" in response.text
+    assert 'name="language" value="en-GB"' in response.text
     assert job_directories(tmp_path) == []
 
 

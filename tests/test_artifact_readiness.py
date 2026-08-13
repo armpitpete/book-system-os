@@ -64,10 +64,12 @@ def write_manifest(
     if source_identity is None:
         metadata = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
         source_identity = metadata["source_identity"]
+    metadata = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
     manifest = {
-        "schema_version": "2",
+        "schema_version": "3",
         "outputs": {artifact_type: spec.filename},
         "source_identity": source_identity,
+        "publishing_metadata": metadata["publishing_metadata"],
         "output_evidence": [
             {
                 "key": artifact_type,
@@ -409,6 +411,34 @@ def test_persistence_rejects_evidence_for_another_manuscript(monkeypatch, tmp_pa
     with pytest.raises(ar.ArtifactReadinessError) as exc:
         ar.persist_readiness_evidence(job_dir, evidence)
     assert exc.value.code == "readiness-source-sha256-mismatch"
+
+
+def test_publishing_metadata_changes_production_configuration(monkeypatch, tmp_path):
+    job_dir, _ = prepare_job(monkeypatch, tmp_path, artifact_type="epub")
+    context = ar.authoritative_artifact_context(job_dir, "epub")
+    original = context["production_config_sha256"]
+    changed_title = ar._production_config_sha256(
+        "epub",
+        {"schema_version": "1", "title": "Changed", "language": None},
+    )
+    changed_language = ar._production_config_sha256(
+        "epub",
+        {"schema_version": "1", "title": "Readiness", "language": "en-GB"},
+    )
+    assert len({original, changed_title, changed_language}) == 3
+
+
+def test_retained_publishing_metadata_mutation_fails_closed(monkeypatch, tmp_path):
+    job_dir, _ = prepare_job(monkeypatch, tmp_path, artifact_type="epub")
+    ar.authoritative_artifact_context(job_dir, "epub")
+    metadata_path = job_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["publishing_metadata"]["language"] = "en-GB"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ar.ArtifactReadinessError) as exc:
+        ar.authoritative_artifact_context(job_dir, "epub")
+    assert exc.value.code == "readiness-artifact-manifest-config-mismatch"
 
 
 def test_v02_dry_run_never_claims_bos_readiness(monkeypatch):

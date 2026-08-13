@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from app.services.artifact_readiness import unevaluated_readiness_report
 from app.services.manuscript_validation import CONTRACT_VERSION, validate_manuscript
 from app.services.provenance import source_identity_text
+from app.services.publishing_metadata import build_publishing_metadata
 
 
 @dataclass(frozen=True)
@@ -51,9 +52,14 @@ def publish_output_plan() -> list[dict[str, str]]:
     ]
 
 
-def build_publish_dry_run(*, title: str, markdown: str) -> dict[str, object]:
+def build_publish_dry_run(
+    *, title: str, markdown: str, language: str | None = None
+) -> dict[str, object]:
     source = source_identity_text(markdown)
-    validation = validate_manuscript(title=title, markdown=markdown)
+    publishing_metadata = build_publishing_metadata(title=title, language=language)
+    validation = validate_manuscript(
+        title=title, markdown=markdown, language=publishing_metadata["language"]
+    )
 
     return {
         "publishable": validation["valid"],
@@ -65,6 +71,7 @@ def build_publish_dry_run(*, title: str, markdown: str) -> dict[str, object]:
         "rendering_attempted": False,
         "job_created": False,
         "contract_version": CONTRACT_VERSION,
+        "publishing_metadata": publishing_metadata,
         "readiness": unevaluated_readiness_report(
             "dry-run-structural-validation-only"
         ),

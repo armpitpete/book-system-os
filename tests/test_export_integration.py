@@ -6,6 +6,7 @@ import shutil
 import struct
 import zipfile
 import zlib
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -37,11 +38,22 @@ def require_export_toolchain() -> None:
         pytest.skip("pandoc and xelatex are required for the real export integration test")
 
 
-def prepare_job(tmp_path: Path, name: str, manuscript: str) -> Path:
+def prepare_job(
+    tmp_path: Path,
+    name: str,
+    manuscript: str,
+    *,
+    publishing_metadata: dict[str, str | None] | None = None,
+) -> Path:
     job_dir = tmp_path / name
     for directory in ("input", "work", "output", "logs"):
         (job_dir / directory).mkdir(parents=True, exist_ok=True)
     (job_dir / "input" / "book.md").write_text(manuscript, encoding="utf-8")
+    if publishing_metadata is not None:
+        (job_dir / "metadata.json").write_text(
+            json.dumps({"publishing_metadata": publishing_metadata}),
+            encoding="utf-8",
+        )
     return job_dir
 
 
@@ -118,7 +130,9 @@ def assert_pdf(path: Path) -> None:
     assert b"%%EOF" in data[-4096:]
 
 
-def assert_epub(path: Path) -> None:
+def assert_epub(
+    path: Path, *, expected_title: str | None = None, expected_language: str | None = None
+) -> None:
     assert zipfile.is_zipfile(path)
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
@@ -133,9 +147,24 @@ def assert_epub(path: Path) -> None:
         assert "café" in xhtml
         assert "<table" in xhtml
         assert "deterministic footnote" in xhtml.lower()
+        if expected_title is not None or expected_language is not None:
+            container = ET.fromstring(archive.read("META-INF/container.xml"))
+            ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+            rootfile = container.find(".//c:rootfile", ns)
+            assert rootfile is not None
+            opf = ET.fromstring(archive.read(rootfile.attrib["full-path"]))
+            dc = {"dc": "http://purl.org/dc/elements/1.1/"}
+            if expected_title is not None:
+                title = opf.find(".//dc:title", dc)
+                assert title is not None and title.text == expected_title
+            if expected_language is not None:
+                language = opf.find(".//dc:language", dc)
+                assert language is not None and language.text == expected_language
 
 
-def assert_docx(path: Path) -> None:
+def assert_docx(
+    path: Path, *, expected_title: str | None = None, expected_language: str | None = None
+) -> None:
     assert zipfile.is_zipfile(path)
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
@@ -149,6 +178,15 @@ def assert_docx(path: Path) -> None:
         )
         assert "café" in document
         assert "<w:tbl" in document
+        if expected_title is not None or expected_language is not None:
+            core = ET.fromstring(archive.read("docProps/core.xml"))
+            dc = {"dc": "http://purl.org/dc/elements/1.1/"}
+            if expected_title is not None:
+                title = core.find("dc:title", dc)
+                assert title is not None and title.text == expected_title
+            if expected_language is not None:
+                language = core.find("dc:language", dc)
+                assert language is not None and language.text == expected_language
 
 
 def publish_ci_artifacts(repository_root: Path, job_dir: Path) -> None:
@@ -237,10 +275,17 @@ def test_representative_corpus_builds_valid_four_format_outputs(
 
     image_path = tmp_path / "h08-image.png"
     write_deterministic_png(image_path)
+    external_title = "H-08 External Publishing Metadata"
+    external_language = "en-GB"
     job_dir = prepare_job(
         tmp_path,
         "h08-representative-export",
         representative_manuscript(image_path),
+        publishing_metadata={
+            "schema_version": "1",
+            "title": external_title,
+            "language": external_language,
+        },
     )
 
     result = pipeline_module.run_pipeline(job_dir)
@@ -256,8 +301,16 @@ def test_representative_corpus_builds_valid_four_format_outputs(
 
     assert_pdf(job_dir / "output" / "book-standard.pdf")
     assert_pdf(job_dir / "output" / "book-nd.pdf")
-    assert_epub(job_dir / "output" / "book.epub")
-    assert_docx(job_dir / "output" / "book.docx")
+    assert_epub(
+        job_dir / "output" / "book.epub",
+        expected_title=external_title,
+        expected_language=external_language,
+    )
+    assert_docx(
+        job_dir / "output" / "book.docx",
+        expected_title=external_title,
+        expected_language=external_language,
+    )
 
     cleaned = (job_dir / "work" / "book-clean.md").read_text(encoding="utf-8")
     for marker in (

@@ -187,7 +187,7 @@ def test_successful_pipeline_records_raw_cleaned_and_ordered_output_evidence(
     }
     assert manifest["transformation"] == {
         "identifier": "structural-cleanup",
-        "version": "1",
+        "version": "2",
     }
     assert manifest["outputs"] == {
         output.key: output.filename for output in PUBLISH_OUTPUTS

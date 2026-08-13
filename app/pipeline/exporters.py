@@ -163,6 +163,7 @@ def _pandoc_command(
         str(markdown_file),
         "--from=markdown+yaml_metadata_block+link_attributes",
         "--toc",
+        "--toc-depth=1",
         f"--lua-filter={holder_filter_relative}",
         f"--variable=book-system-holder-renderer-sha256={holder_filter_sha256}",
         f"--resource-path={_resource_path(markdown_file, resource_dir)}",

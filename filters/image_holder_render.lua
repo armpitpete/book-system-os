@@ -78,6 +78,20 @@ local function page_break()
   )
 end
 
+function Header(header)
+  if FORMAT:match("latex") and header.level == 1 then
+    add_class(header.classes, "unnumbered")
+  end
+  return header
+end
+
+function Pandoc(doc)
+  if FORMAT:match("latex") then
+    doc.blocks:insert(1, pandoc.RawBlock("latex", "\\pagestyle{plain}"))
+  end
+  return doc
+end
+
 function Image(image)
   local holder = holder_name(image)
   if holder == nil then

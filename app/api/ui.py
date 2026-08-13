@@ -20,6 +20,8 @@ from app.services.job_queue import (
     retry_job,
     set_job_state,
 )
+from app.services.manuscript_validation import ValidationServiceError
+from app.services.publish_plan import build_publish_dry_run
 from app.services.security import current_csrf_token
 from app.version import APP_VERSION, git_commit_label
 
@@ -32,9 +34,15 @@ PAGE_STYLE = """
     main { max-width: 980px; margin: 0 auto; padding: 24px; }
     h1, h2, h3 { line-height: 1.15; color: #ffffff; }
     .card { background: #2b3137; border: 1px solid #3b424a; border-radius: 14px; padding: 18px; margin: 16px 0; box-shadow: 0 1px 6px rgba(0,0,0,.22); }
+    .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }
+    .workflow-grid .card { margin: 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .check-pass { border-left: 5px solid #22c55e; }
+    .check-fail { border-left: 5px solid #ef4444; }
     textarea, input, select { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #4a535c; border-radius: 10px; font: inherit; background: #1f252b; color: #f4f1e8; }
     textarea { min-height: 320px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
     button, .button { display: inline-block; background: #3b424a; color: #f4f1e8; border: 1px solid #59636d; border-radius: 10px; padding: 10px 14px; text-decoration: none; font-weight: 650; cursor: pointer; }
+    .primary { background: #f4f1e8; color: #20262c; border-color: #f4f1e8; }
     .danger { background: #7f1d1d; color: #fee2e2; border-color: #b91c1c; }
     .secondary { background: #2b3137; color: #f4f1e8; border: 1px solid #59636d; }
     .muted { color: #c6cbd2; }
@@ -51,6 +59,8 @@ PAGE_STYLE = """
     pre.log-snippet { max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: #171c21; color: #f4f1e8; border: 1px solid #3b424a; border-radius: 10px; padding: 12px; font-size: 0.92rem; }
     details.log-viewer { margin: 12px 0; }
     details.log-viewer summary { cursor: pointer; font-weight: 650; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid #3b424a; }
     ::placeholder { color: #aeb5bc; }
     option { background: #1f252b; color: #f4f1e8; }
     a { color: #f4f1e8; }
@@ -368,6 +378,128 @@ def dashboard_job_cards(
     )
 
 
+def _author_workflow() -> str:
+    return """
+      <div class="workflow-grid">
+        <div class="card">
+          <h2>1. Prepare</h2>
+          <p>Keep the accepted manuscript intact. Add genuine book images only when the book needs them.</p>
+          <div class="actions">
+            <a class="button" href="/assets">Images</a>
+            <a class="button secondary" href="/revisions">Revision Studio</a>
+          </div>
+        </div>
+        <div class="card">
+          <h2>2. Check</h2>
+          <p>Run the same structural validation and four-output plan without creating a job or rendering files.</p>
+        </div>
+        <div class="card">
+          <h2>3. Build</h2>
+          <p>Queue a test build first, or explicitly retain a real publication build.</p>
+        </div>
+        <div class="card">
+          <h2>4. Review</h2>
+          <p>Download the exact outputs and inspect them. Machine success is not human publication or print acceptance.</p>
+        </div>
+      </div>
+    """
+
+
+def _finding_rows(findings: list[dict]) -> str:
+    if not findings:
+        return '<p class="muted">None.</p>'
+    rows = []
+    for finding in findings:
+        severity = html.escape(str(finding.get("severity", "finding")))
+        code = html.escape(str(finding.get("code", "unknown")))
+        message = html.escape(str(finding.get("message", "")))
+        rows.append(f"<li><strong>{severity}: {code}</strong> — {message}</li>")
+    return f"<ul>{''.join(rows)}</ul>"
+
+
+def _queue_after_check_form(*, title: str, content: str, state: str, label: str) -> str:
+    safe_title = html.escape(title, quote=True)
+    safe_content = html.escape(content)
+    return post_form(
+        "/submit-form",
+        (
+            f'<input type="hidden" name="title" value="{safe_title}">'
+            f'<input type="hidden" name="state" value="{html.escape(state, quote=True)}">'
+            f'<textarea name="content" hidden>{safe_content}</textarea>'
+            f'<button type="submit">{html.escape(label)}</button>'
+        ),
+        style="display:inline-block;",
+    )
+
+
+def _book_check_page(*, title: str, content: str, result: dict) -> HTMLResponse:
+    validation = result.get("validation", {})
+    summary = validation.get("summary", {})
+    publishable = bool(result.get("publishable"))
+    result_class = "check-pass" if publishable else "check-fail"
+    heading = "Book check passed" if publishable else "Book check needs attention"
+    state_text = (
+        "The manuscript passed the bounded structural production check. No job or artifact was created."
+        if publishable
+        else "The manuscript did not pass the bounded structural production check. Nothing was queued or rendered."
+    )
+    outputs = "".join(
+        f"<li>{html.escape(str(output.get('filename', 'output')))}</li>"
+        for output in result.get("outputs", [])
+    )
+    actions = '<a class="button secondary" href="/">Back and edit</a>'
+    if publishable:
+        actions += _queue_after_check_form(
+            title=title,
+            content=content,
+            state="test",
+            label="Queue test build",
+        )
+        actions += _queue_after_check_form(
+            title=title,
+            content=content,
+            state="production",
+            label="Queue real book build",
+        )
+
+    return page(
+        "Book check",
+        f"""
+      <p><a href="/">&larr; Back to publishing dashboard</a></p>
+      <div class="card {result_class}">
+        <h1>{heading}</h1>
+        <p>{state_text}</p>
+        <p><strong>Title:</strong> {html.escape(title or 'Untitled')}</p>
+        <p><strong>Source:</strong> {int(result.get('source_bytes', 0))} bytes</p>
+      </div>
+      <div class="card">
+        <h2>Errors</h2>
+        {_finding_rows(validation.get('errors', []))}
+        <h2>Warnings</h2>
+        {_finding_rows(validation.get('warnings', []))}
+      </div>
+      <div class="card">
+        <h2>Structure</h2>
+        <table>
+          <tbody>
+            <tr><th>Headings</th><td>{int(summary.get('heading_count', 0))}</td></tr>
+            <tr><th>Images</th><td>{int(summary.get('image_count', 0))}</td></tr>
+            <tr><th>Tables</th><td>{int(summary.get('table_count', 0))}</td></tr>
+            <tr><th>Footnotes</th><td>{int(summary.get('footnote_count', 0))}</td></tr>
+            <tr><th>Broken internal links</th><td>{int(summary.get('broken_internal_link_count', 0))}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Planned outputs</h2>
+        <ul>{outputs}</ul>
+        <p class="muted">This is only the output plan. Rendering was not attempted and readiness was not claimed.</p>
+      </div>
+      <div class="actions">{actions}</div>
+    """,
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     show_test: str = Query("1"),
@@ -378,19 +510,32 @@ def dashboard(
     show_failed_bool = truthy_query(show_failed, default=True)
     show_archived_bool = truthy_query(show_archived, default=False)
 
+    manuscript_form = post_form(
+        "/check-form",
+        """
+          <p><label>Book title<br>
+            <input name="title" placeholder="Book title">
+          </label></p>
+          <p><label>Manuscript Markdown<br>
+            <textarea name="content" required placeholder="# Title&#10;&#10;Paste the complete manuscript here..."></textarea>
+          </label></p>
+          <button class="primary" type="submit">Check book</button>
+        """,
+    )
+
     submit = post_form(
         "/submit-form",
         """
-          <p><label>Title<br>
-            <input name="title" value="A Book for Neurodivergent Minds">
+          <p><label>Book title<br>
+            <input name="title" placeholder="Book title">
           </label></p>
-          <p><label>Job type<br>
+          <p><label>Build type<br>
             <select name="state">
-              <option value="test" selected>Test — default for manual checks</option>
-              <option value="production">Production — retained as a real publication job</option>
+              <option value="test" selected>Test build — default</option>
+              <option value="production">Real book build — retained publication job</option>
             </select>
           </label></p>
-          <p><label>Markdown<br>
+          <p><label>Manuscript Markdown<br>
             <textarea name="content" required placeholder="# Title&#10;&#10;Paste Markdown here..."></textarea>
           </label></p>
           <button type="submit">Queue book build</button>
@@ -416,52 +561,92 @@ def dashboard(
     return page(
         "Publishing Dashboard",
         f"""
-      <h1>Publishing Dashboard</h1>
+      <h1>Book System OS</h1>
+      <p>Prepare a manuscript, check it without side effects, build the four book formats, then review the exact artifacts.</p>
       <p class="muted">Domain target: <code>publish.toiletrage.co.uk</code></p>
 
-      <div class="card">
-        <h2>Queue book build</h2>
-        {submit}
-      </div>
+      {_author_workflow()}
 
       <div class="card">
-        <h2>Job filters</h2>
-        <form method="get" action="/">
-          <p><label>Test jobs<br>
-            <select name="show_test">
-              <option value="1"{selected_attr(show_test_bool, True)}>Show</option>
-              <option value="0"{selected_attr(show_test_bool, False)}>Hide</option>
-            </select>
-          </label></p>
-          <p><label>Failed jobs<br>
-            <select name="show_failed">
-              <option value="1"{selected_attr(show_failed_bool, True)}>Show</option>
-              <option value="0"{selected_attr(show_failed_bool, False)}>Hide</option>
-            </select>
-          </label></p>
-          <p><label>Archived jobs<br>
-            <select name="show_archived">
-              <option value="0"{selected_attr(show_archived_bool, False)}>Hide</option>
-              <option value="1"{selected_attr(show_archived_bool, True)}>Show</option>
-            </select>
-          </label></p>
-          <button type="submit">Apply filters</button>
-          <a class="button secondary" href="/">Reset</a>
-        </form>
+        <h2>Check a book</h2>
+        <p class="muted">Recommended first step. This creates no job and renders no files.</p>
+        {manuscript_form}
       </div>
 
-      <div class="card">
-        <h2>Cleanup old test jobs</h2>
-        <p class="muted">Preview old test jobs before archiving them.
-        Running and queued jobs are never touched.</p>
-        {cleanup}
-      </div>
+      <details>
+        <summary>Queue a build without running the check first</summary>
+        <div class="card">
+          <h2>Queue book build</h2>
+          {submit}
+        </div>
+      </details>
 
-      <h2>Jobs</h2>
+      <h2>Recent builds</h2>
       <p class="muted">Showing up to 30 jobs matching the current filters.</p>
       {job_list}
+
+      <details>
+        <summary>Build filters and test-job housekeeping</summary>
+        <div class="card">
+          <h2>Job filters</h2>
+          <form method="get" action="/">
+            <p><label>Test jobs<br>
+              <select name="show_test">
+                <option value="1"{selected_attr(show_test_bool, True)}>Show</option>
+                <option value="0"{selected_attr(show_test_bool, False)}>Hide</option>
+              </select>
+            </label></p>
+            <p><label>Failed jobs<br>
+              <select name="show_failed">
+                <option value="1"{selected_attr(show_failed_bool, True)}>Show</option>
+                <option value="0"{selected_attr(show_failed_bool, False)}>Hide</option>
+              </select>
+            </label></p>
+            <p><label>Archived jobs<br>
+              <select name="show_archived">
+                <option value="0"{selected_attr(show_archived_bool, False)}>Hide</option>
+                <option value="1"{selected_attr(show_archived_bool, True)}>Show</option>
+              </select>
+            </label></p>
+            <button type="submit">Apply filters</button>
+            <a class="button secondary" href="/">Reset</a>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Cleanup old test jobs</h2>
+          <p class="muted">Preview old test jobs before archiving them. Running and queued jobs are never touched.</p>
+          {cleanup}
+        </div>
+      </details>
     """,
     )
+
+
+@router.post("/check-form", response_class=HTMLResponse)
+def check_form(
+    title: str = Form("Untitled"),
+    content: str = Form(...),
+) -> HTMLResponse:
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Markdown content is required")
+    try:
+        result = build_publish_dry_run(title=title, markdown=content)
+    except ValidationServiceError as exc:
+        response = page(
+            "Book check unavailable",
+            f"""
+          <p><a href="/">&larr; Back to publishing dashboard</a></p>
+          <div class="card check-fail">
+            <h1>Book check unavailable</h1>
+            <p>{html.escape(str(exc))}</p>
+            <p class="muted">No job or artifact was created.</p>
+          </div>
+        """,
+        )
+        response.status_code = exc.status_code
+        return response
+    return _book_check_page(title=title, content=content, result=result)
 
 
 @router.post("/submit-form")

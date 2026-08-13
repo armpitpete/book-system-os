@@ -1,0 +1,43 @@
+name: Export exact Book System OS main source
+
+on:
+  push:
+    branches:
+      - agent/export-exact-main-source
+    paths:
+      - .github/workflows/export-exact-main-source.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EXACT_MAIN: cc9d04709f46f996ff74d1fc8dae51cd23a0efc0
+    steps:
+      - name: Check out exact accepted main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.EXACT_MAIN }}
+          fetch-depth: 1
+
+      - name: Verify and package exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_MAIN"
+          git status --porcelain | test ! -s /dev/stdin
+          tar --exclude=.git -czf /tmp/book-system-os-cc9d047-source.tgz .
+          sha256sum /tmp/book-system-os-cc9d047-source.tgz > /tmp/book-system-os-cc9d047-source.sha256
+
+      - name: Upload exact source checkout
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: book-system-os-source-cc9d047
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            /tmp/book-system-os-cc9d047-source.tgz
+            /tmp/book-system-os-cc9d047-source.sha256

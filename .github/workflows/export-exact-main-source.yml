@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      EXACT_MAIN: cc9d04709f46f996ff74d1fc8dae51cd23a0efc0
+      EXACT_MAIN: b9cdb97707877d2a4ea6902bf1caf338c30fadfd
     steps:
       - name: Check out exact accepted main
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -29,15 +29,15 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXACT_MAIN"
           git status --porcelain | test ! -s /dev/stdin
-          tar --exclude=.git -czf /tmp/book-system-os-cc9d047-source.tgz .
-          sha256sum /tmp/book-system-os-cc9d047-source.tgz > /tmp/book-system-os-cc9d047-source.sha256
+          tar --exclude=.git -czf /tmp/book-system-os-b9cdb97-source.tgz .
+          sha256sum /tmp/book-system-os-b9cdb97-source.tgz > /tmp/book-system-os-b9cdb97-source.sha256
 
       - name: Upload exact source checkout
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: book-system-os-source-cc9d047
+          name: book-system-os-source-b9cdb97
           retention-days: 7
           if-no-files-found: error
           path: |
-            /tmp/book-system-os-cc9d047-source.tgz
-            /tmp/book-system-os-cc9d047-source.sha256
+            /tmp/book-system-os-b9cdb97-source.tgz
+            /tmp/book-system-os-b9cdb97-source.sha256

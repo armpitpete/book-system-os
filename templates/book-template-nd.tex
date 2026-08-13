@@ -41,6 +41,12 @@ $endif$
 \setlength{\parindent}{0pt}
 
 \hypersetup{
+$if(title-meta)$
+  pdftitle={$title-meta$},
+$endif$
+$if(lang)$
+  pdflang={$lang$},
+$endif$
   colorlinks=true,
   linkcolor=black,
   urlcolor=black

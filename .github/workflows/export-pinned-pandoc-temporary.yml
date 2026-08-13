@@ -1,0 +1,34 @@
+name: Temporary export pinned Pandoc
+
+on:
+  push:
+    branches:
+      - agent/final-real-book-human-artifacts
+
+permissions:
+  contents: read
+
+jobs:
+  export-pandoc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install and verify repository-pinned Pandoc
+        run: |
+          set -euo pipefail
+          bash scripts/install_pinned_pandoc.sh --runtime-root "$RUNNER_TEMP/book-system-pandoc"
+          "$RUNNER_TEMP/book-system-pandoc/current/bin/pandoc" --version | head -1
+          sha256sum "$RUNNER_TEMP/book-system-pandoc/current/bin/pandoc" > "$RUNNER_TEMP/pandoc-bin.sha256"
+      - name: Upload exact pinned binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: temporary-pinned-pandoc-3.9.0.2
+          path: |
+            ${{ runner.temp }}/book-system-pandoc/current/bin/pandoc
+            ${{ runner.temp }}/pandoc-bin.sha256
+          if-no-files-found: error
+          retention-days: 1

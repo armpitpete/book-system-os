@@ -196,6 +196,7 @@ def test_pipeline_manifest_uses_shared_atomic_writer(
         _cleaned: Path,
         output_dir: Path,
         _log_file: Path,
+        **_kwargs: object,
     ) -> dict[str, str]:
         for key, filename in outputs.items():
             (output_dir / filename).write_bytes(key.encode("utf-8"))

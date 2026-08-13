@@ -39,3 +39,19 @@ def test_custom_latex_templates_include_pandoc_highlighting_macros(
     assert "$if(highlighting-macros)$" in template
     assert "$highlighting-macros$" in template
     assert "$endif$" in template
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    ["book-template-standard.tex", "book-template-nd.tex"],
+)
+def test_custom_latex_templates_emit_pdf_title_and_language_metadata(
+    template_name: str,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "templates" / template_name).read_text(encoding="utf-8")
+
+    assert "$if(title-meta)$" in template
+    assert "pdftitle={$title-meta$}" in template
+    assert "$if(lang)$" in template
+    assert "pdflang={$lang$}" in template

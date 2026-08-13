@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 from pathlib import Path
+from typing import Mapping
 
 from app.services.publish_plan import PUBLISH_OUTPUTS, PublishOutputSpec
 from app.services.resource_limits import (
@@ -145,6 +146,7 @@ def _pandoc_command(
     output: PublishOutputSpec,
     *,
     resource_dir: Path | None = None,
+    publishing_metadata: Mapping[str, str | None] | None = None,
 ) -> list[str]:
     holder_filter = filters_dir() / "image_holder_render.lua"
     if not holder_filter.is_file():
@@ -165,6 +167,14 @@ def _pandoc_command(
         f"--variable=book-system-holder-renderer-sha256={holder_filter_sha256}",
         f"--resource-path={_resource_path(markdown_file, resource_dir)}",
     ]
+
+    metadata = publishing_metadata or {}
+    title = metadata.get("title")
+    language = metadata.get("language")
+    if title:
+        cmd.extend(["--metadata", f"title={title}"])
+    if language:
+        cmd.extend(["--metadata", f"lang={language}"])
 
     if output.key in {"pdf_standard", "pdf_nd"}:
         cmd.extend(
@@ -192,6 +202,7 @@ def pandoc_export(
     log_file: Path,
     *,
     resource_dir: Path | None = None,
+    publishing_metadata: Mapping[str, str | None] | None = None,
 ) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, str] = {}
@@ -203,6 +214,7 @@ def pandoc_export(
             markdown_file,
             output,
             resource_dir=resource_dir,
+            publishing_metadata=publishing_metadata,
         )
         cmd[-1] = str(output_path)
         _run_export_command(cmd, job_dir=job_dir, log_file=log_file)

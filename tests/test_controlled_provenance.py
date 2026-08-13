@@ -52,7 +52,9 @@ def isolated_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def install_exporter(monkeypatch: pytest.MonkeyPatch) -> None:
-    def export(_cleaned: Path, output_dir: Path, _log: Path) -> dict[str, str]:
+    def export(
+        _cleaned: Path, output_dir: Path, _log: Path, **_kwargs: object
+    ) -> dict[str, str]:
         output_dir.mkdir(parents=True, exist_ok=True)
         outputs: dict[str, str] = {}
         for index, spec in enumerate(PUBLISH_OUTPUTS, start=1):
@@ -178,12 +180,17 @@ def test_successful_pipeline_records_raw_cleaned_and_ordered_output_evidence(
     metadata = json.loads((job_dir / "metadata.json").read_text(encoding="utf-8"))
     manifest = json.loads((job_dir / "manifest.json").read_text(encoding="utf-8"))
     cleaned = (job_dir / "work" / "book-clean.md").read_bytes()
-    assert manifest["schema_version"] == "2"
+    assert manifest["schema_version"] == "3"
     assert manifest["provenance_state"] == "available"
     assert manifest["source_identity"] == metadata["source_identity"]
     assert manifest["cleaned_markdown"] == {
         "bytes": len(cleaned),
         "sha256": hashlib.sha256(cleaned).hexdigest(),
+    }
+    assert manifest["publishing_metadata"] == {
+        "schema_version": "1",
+        "title": "Manifest",
+        "language": None,
     }
     assert manifest["transformation"] == {
         "identifier": "structural-cleanup",

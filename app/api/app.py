@@ -19,6 +19,7 @@ from app.services.manuscript_validation import (
     validate_manuscript,
 )
 from app.services.publish_plan import build_publish_dry_run
+from app.services.publishing_metadata import PublishingMetadataError
 from app.services.readiness_guard import readiness_report
 from app.services.resource_limits import RequestBodyLimitMiddleware, ResourceLimitError
 from app.services.revision_studio import RevisionStudioError
@@ -62,6 +63,16 @@ async def validation_service_error(
     return JSONResponse(status_code=exc.status_code, content=exc.payload())
 
 
+@app.exception_handler(PublishingMetadataError)
+async def publishing_metadata_error(
+    _request: Request,
+    exc: PublishingMetadataError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=400, content={"detail": str(exc), "code": exc.code}
+    )
+
+
 @app.exception_handler(RevisionStudioError)
 async def revision_studio_error(
     _request: Request,
@@ -71,17 +82,20 @@ async def revision_studio_error(
 
 
 class BookSubmitRequest(BaseModel):
-    title: str = Field(default="Untitled", max_length=200)
+    title: str = Field(default="", max_length=200)
+    language: str = Field(default="", max_length=35)
     content: str = Field(min_length=1)
 
 
 class BookValidateRequest(BaseModel):
-    title: str = Field(default="Untitled", max_length=200)
+    title: str = Field(default="", max_length=200)
+    language: str = Field(default="", max_length=35)
     content: str
 
 
 class BookPublishDryRunRequest(BaseModel):
-    title: str = Field(default="Untitled", max_length=200)
+    title: str = Field(default="", max_length=200)
+    language: str = Field(default="", max_length=35)
     content: str
 
 
@@ -94,6 +108,7 @@ class ValidationFindingResponse(BaseModel):
 
 class ValidationSummaryResponse(BaseModel):
     request_title: str
+    request_language: str | None = None
     source_bytes: int
     normalised_bytes: int
     normalisation_changed: bool
@@ -125,8 +140,15 @@ class PublishOutputResponse(BaseModel):
     media_type: str
 
 
+class PublishingMetadataResponse(BaseModel):
+    schema_version: Literal["1"]
+    title: str | None = None
+    language: str | None = None
+
+
 class BookPublishDryRunResponse(BaseModel):
     publishable: bool
+    publishing_metadata: PublishingMetadataResponse
     validation: BookValidateResponse
     outputs: list[PublishOutputResponse]
     source_bytes: int
@@ -202,7 +224,9 @@ def api_v1_status() -> dict:
     response_model=BookValidateResponse,
 )
 def api_validate(payload: BookValidateRequest) -> dict[str, object]:
-    return validate_manuscript(title=payload.title, markdown=payload.content)
+    return validate_manuscript(
+        title=payload.title, markdown=payload.content, language=payload.language
+    )
 
 
 @app.post(
@@ -211,7 +235,9 @@ def api_validate(payload: BookValidateRequest) -> dict[str, object]:
     response_model=BookPublishDryRunResponse,
 )
 def api_publish_dry_run(payload: BookPublishDryRunRequest) -> dict[str, object]:
-    return build_publish_dry_run(title=payload.title, markdown=payload.content)
+    return build_publish_dry_run(
+        title=payload.title, markdown=payload.content, language=payload.language
+    )
 
 
 @app.post("/api/submit", dependencies=[Depends(api_key_required)])
@@ -220,6 +246,7 @@ def api_submit(payload: BookSubmitRequest) -> dict[str, str]:
         title=payload.title,
         markdown=payload.content,
         state="production",
+        language=payload.language,
     )
     return {"job_id": job_id, "status": "queued", "state": "production"}
 

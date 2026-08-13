@@ -22,6 +22,7 @@ from app.services.job_queue import (
 )
 from app.services.manuscript_validation import ValidationServiceError
 from app.services.publish_plan import build_publish_dry_run
+from app.services.publishing_metadata import PublishingMetadataError
 from app.services.security import current_csrf_token
 from app.version import APP_VERSION, git_commit_label
 
@@ -417,13 +418,17 @@ def _finding_rows(findings: list[dict]) -> str:
     return f"<ul>{''.join(rows)}</ul>"
 
 
-def _queue_after_check_form(*, title: str, content: str, state: str, label: str) -> str:
+def _queue_after_check_form(
+    *, title: str, language: str, content: str, state: str, label: str
+) -> str:
     safe_title = html.escape(title, quote=True)
+    safe_language = html.escape(language, quote=True)
     safe_content = html.escape(content)
     return post_form(
         "/submit-form",
         (
             f'<input type="hidden" name="title" value="{safe_title}">'
+            f'<input type="hidden" name="language" value="{safe_language}">'
             f'<input type="hidden" name="state" value="{html.escape(state, quote=True)}">'
             f'<textarea name="content" hidden>{safe_content}</textarea>'
             f'<button type="submit">{html.escape(label)}</button>'
@@ -432,7 +437,7 @@ def _queue_after_check_form(*, title: str, content: str, state: str, label: str)
     )
 
 
-def _book_check_page(*, title: str, content: str, result: dict) -> HTMLResponse:
+def _book_check_page(*, title: str, language: str, content: str, result: dict) -> HTMLResponse:
     validation = result.get("validation", {})
     summary = validation.get("summary", {})
     publishable = bool(result.get("publishable"))
@@ -451,12 +456,14 @@ def _book_check_page(*, title: str, content: str, result: dict) -> HTMLResponse:
     if publishable:
         actions += _queue_after_check_form(
             title=title,
+            language=language,
             content=content,
             state="test",
             label="Queue test build",
         )
         actions += _queue_after_check_form(
             title=title,
+            language=language,
             content=content,
             state="production",
             label="Queue real book build",
@@ -470,6 +477,7 @@ def _book_check_page(*, title: str, content: str, result: dict) -> HTMLResponse:
         <h1>{heading}</h1>
         <p>{state_text}</p>
         <p><strong>Title:</strong> {html.escape(title or 'Untitled')}</p>
+        <p><strong>Language:</strong> {html.escape(language or 'From manuscript / unspecified')}</p>
         <p><strong>Source:</strong> {int(result.get('source_bytes', 0))} bytes</p>
       </div>
       <div class="card">
@@ -516,6 +524,9 @@ def dashboard(
           <p><label>Book title<br>
             <input name="title" placeholder="Book title">
           </label></p>
+          <p><label>Book language (optional)<br>
+            <input name="language" placeholder="en-GB">
+          </label></p>
           <p><label>Manuscript Markdown<br>
             <textarea name="content" required placeholder="# Title&#10;&#10;Paste the complete manuscript here..."></textarea>
           </label></p>
@@ -528,6 +539,9 @@ def dashboard(
         """
           <p><label>Book title<br>
             <input name="title" placeholder="Book title">
+          </label></p>
+          <p><label>Book language (optional)<br>
+            <input name="language" placeholder="en-GB">
           </label></p>
           <p><label>Build type<br>
             <select name="state">
@@ -625,13 +639,18 @@ def dashboard(
 
 @router.post("/check-form", response_class=HTMLResponse)
 def check_form(
-    title: str = Form("Untitled"),
+    title: str = Form(""),
+    language: str = Form(""),
     content: str = Form(...),
 ) -> HTMLResponse:
     if not content.strip():
         raise HTTPException(status_code=400, detail="Markdown content is required")
     try:
-        result = build_publish_dry_run(title=title, markdown=content)
+        result = build_publish_dry_run(
+            title=title, markdown=content, language=language
+        )
+    except PublishingMetadataError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValidationServiceError as exc:
         response = page(
             "Book check unavailable",
@@ -646,12 +665,15 @@ def check_form(
         )
         response.status_code = exc.status_code
         return response
-    return _book_check_page(title=title, content=content, result=result)
+    return _book_check_page(
+        title=title, language=language, content=content, result=result
+    )
 
 
 @router.post("/submit-form")
 def submit_form(
-    title: str = Form("Untitled"),
+    title: str = Form(""),
+    language: str = Form(""),
     content: str = Form(...),
     state: str = Form("test"),
 ) -> RedirectResponse:
@@ -661,7 +683,12 @@ def submit_form(
     if not content.strip():
         raise HTTPException(status_code=400, detail="Markdown content is required")
 
-    create_job(title=title, markdown=content, state=requested_state)
+    try:
+        create_job(
+            title=title, markdown=content, state=requested_state, language=language
+        )
+    except PublishingMetadataError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(url="/", status_code=303)
 
 

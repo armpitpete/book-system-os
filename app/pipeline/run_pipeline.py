@@ -19,6 +19,7 @@ from app.services.provenance import (
     verify_job_source,
 )
 from app.services.publish_plan import PUBLISH_OUTPUTS
+from app.services.publishing_metadata import PublishingMetadataError, load_job_publishing_metadata
 from app.services.resource_limits import (
     FINAL_RECORD_OVERHEAD_BYTES,
     ResourceLimitError,
@@ -32,6 +33,8 @@ def _failure_step(exc: Exception) -> str:
         return "source-integrity"
     if isinstance(exc, ManuscriptInputError):
         return "input-validation"
+    if isinstance(exc, PublishingMetadataError):
+        return "publishing-metadata"
     if isinstance(exc, ExportTimeoutError):
         return "export-timeout"
     if isinstance(exc, ResourceLimitError):
@@ -40,7 +43,7 @@ def _failure_step(exc: Exception) -> str:
 
 
 def _failure_extra(exc: Exception) -> dict[str, object] | None:
-    if isinstance(exc, (ProvenanceError, ManuscriptInputError)):
+    if isinstance(exc, (ProvenanceError, ManuscriptInputError, PublishingMetadataError)):
         return {"failure_code": exc.code}
     if isinstance(exc, ResourceLimitError):
         return {
@@ -80,6 +83,7 @@ def _derivation_manifest(
     outputs: dict[str, str],
     output_dir: Path,
     final_status: dict[str, Any],
+    publishing_metadata: dict[str, str | None],
 ) -> dict[str, Any]:
     cleaned_identity = source_identity_bytes(cleaned_bytes)
     return {
@@ -93,6 +97,7 @@ def _derivation_manifest(
             "bytes": cleaned_identity["source_bytes"],
             "sha256": cleaned_identity["source_sha256"],
         },
+        "publishing_metadata": publishing_metadata,
         "transformation": {
             "identifier": STRUCTURAL_TRANSFORMATION_ID,
             "version": STRUCTURAL_TRANSFORMATION_VERSION,
@@ -113,6 +118,7 @@ def run_pipeline(job_dir: Path) -> int:
 
     try:
         provenance = verify_job_source(job_dir)
+        publishing_metadata = load_job_publishing_metadata(job_dir)
         enforce_job_storage_limits(job_dir)
 
         write_status(
@@ -143,7 +149,12 @@ def run_pipeline(job_dir: Path) -> int:
             step="pandoc-export",
             message="Building PDF/EPUB/DOCX outputs",
         )
-        outputs = pandoc_export(cleaned_file, output_dir, log_file)
+        outputs = pandoc_export(
+            cleaned_file,
+            output_dir,
+            log_file,
+            publishing_metadata=publishing_metadata,
+        )
 
         enforce_job_storage_limits(
             job_dir,
@@ -157,6 +168,7 @@ def run_pipeline(job_dir: Path) -> int:
             outputs=outputs,
             output_dir=output_dir,
             final_status=final_status,
+            publishing_metadata=publishing_metadata,
         )
         atomic_write_json(job_dir / "manifest.json", manifest)
         return 0

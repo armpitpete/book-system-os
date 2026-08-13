@@ -88,7 +88,7 @@ def test_existing_absolute_image_reaches_export(
     job_dir = prepare_job(tmp_path, manuscript, "existing-local-image")
     export_called = False
 
-    def successful_export(_markdown: Path, output_dir: Path, _log: Path):
+    def successful_export(_markdown: Path, output_dir: Path, _log: Path, **_kwargs: object):
         nonlocal export_called
         export_called = True
         assert output_dir == job_dir / "output"

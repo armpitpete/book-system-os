@@ -6,6 +6,12 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from app.services.publishing_metadata import (
+    PublishingMetadataError,
+    empty_publishing_metadata,
+    load_job_publishing_metadata,
+    parse_publishing_metadata,
+)
 from app.services.provenance import (
     PROVENANCE_UNAVAILABLE,
     STRUCTURAL_TRANSFORMATION_ID,
@@ -192,17 +198,23 @@ def _output_specs() -> dict[str, Any]:
     return specs
 
 
-def _production_config_sha256(artifact_type: str) -> str:
+def _production_config_sha256(
+    artifact_type: str, publishing_metadata: Mapping[str, str | None] | None = None
+) -> str:
     try:
         spec = _output_specs()[artifact_type]
     except KeyError as exc:
         raise ArtifactReadinessError(
-            "readiness-artifact-type-unsupported", "Artifact type is not supported by BOS-RDY-001"
+            "readiness-artifact-type-unsupported",
+            "Artifact type is not supported by BOS-RDY-001",
         ) from exc
 
     from app.pipeline.exporters import _pandoc_command
 
-    command = _pandoc_command(Path("__BOOK__.md"), spec)
+    metadata = dict(publishing_metadata or empty_publishing_metadata())
+    command = _pandoc_command(
+        Path("__BOOK__.md"), spec, publishing_metadata=metadata
+    )
     template = None
     normalised = []
     for argument in command:
@@ -212,21 +224,29 @@ def _production_config_sha256(artifact_type: str) -> str:
         path = Path(argument.split("=", 1)[1])
         if not path.is_file():
             raise ArtifactReadinessError(
-                "readiness-production-config-unavailable", "Configured export template is unavailable"
+                "readiness-production-config-unavailable",
+                "Configured export template is unavailable",
             )
-        template = {"filename": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
+        template = {
+            "filename": path.name,
+            "bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
         normalised.append(f"--template={path.name}")
-    return _canonical_sha256({
-        "schema_version": "1",
-        "artifact_type": artifact_type,
-        "output": {"filename": spec.filename, "media_type": spec.media_type},
-        "pandoc_command": normalised,
-        "template": template,
-        "structural_transformation": {
-            "identifier": STRUCTURAL_TRANSFORMATION_ID,
-            "version": STRUCTURAL_TRANSFORMATION_VERSION,
-        },
-    })
+    return _canonical_sha256(
+        {
+            "schema_version": "2",
+            "artifact_type": artifact_type,
+            "output": {"filename": spec.filename, "media_type": spec.media_type},
+            "pandoc_command": normalised,
+            "publishing_metadata": metadata,
+            "template": template,
+            "structural_transformation": {
+                "identifier": STRUCTURAL_TRANSFORMATION_ID,
+                "version": STRUCTURAL_TRANSFORMATION_VERSION,
+            },
+        }
+    )
 
 
 def _asset_records(job_dir: Path) -> list[dict[str, Any]]:
@@ -318,6 +338,35 @@ def _manifest(job_dir: Path) -> dict[str, Any]:
     return value
 
 
+def _bound_publishing_metadata(job_dir: Path, manifest: Mapping[str, Any]) -> dict[str, str | None]:
+    try:
+        current = load_job_publishing_metadata(job_dir)
+    except PublishingMetadataError as exc:
+        raise ArtifactReadinessError(exc.code, str(exc)) from exc
+
+    if "publishing_metadata" not in manifest:
+        if current != empty_publishing_metadata():
+            raise ArtifactReadinessError(
+                "readiness-artifact-manifest-config-mismatch",
+                "Artifact manifest does not retain the job publishing metadata",
+            )
+        return current
+
+    try:
+        recorded = parse_publishing_metadata(manifest["publishing_metadata"])
+    except PublishingMetadataError as exc:
+        raise ArtifactReadinessError(
+            "readiness-artifact-manifest-invalid",
+            "Artifact manifest publishing metadata is invalid",
+        ) from exc
+    if recorded != current:
+        raise ArtifactReadinessError(
+            "readiness-artifact-manifest-config-mismatch",
+            "Artifact manifest publishing metadata differs from the retained job configuration",
+        )
+    return current
+
+
 def authoritative_artifact_context(job_dir: Path, artifact_type: str) -> dict[str, Any]:
     job_dir = Path(job_dir)
     if artifact_type not in SUPPORTED_ARTIFACT_TYPES:
@@ -327,6 +376,7 @@ def authoritative_artifact_context(job_dir: Path, artifact_type: str) -> dict[st
     spec = _output_specs()[artifact_type]
     source = _source_sha256(job_dir)
     manifest = _manifest(job_dir)
+    publishing_metadata = _bound_publishing_metadata(job_dir, manifest)
     manifest_source = manifest.get("source_identity")
     if not isinstance(manifest_source, dict) or manifest_source.get("source_sha256") != source:
         raise ArtifactReadinessError(
@@ -370,7 +420,9 @@ def authoritative_artifact_context(job_dir: Path, artifact_type: str) -> dict[st
         "source_sha256": source,
         "artifact_type": artifact_type,
         "artifact_sha256": actual_sha,
-        "production_config_sha256": _production_config_sha256(artifact_type),
+        "production_config_sha256": _production_config_sha256(
+            artifact_type, publishing_metadata
+        ),
         "assets_sha256": _assets_sha256(job_dir),
     }
 

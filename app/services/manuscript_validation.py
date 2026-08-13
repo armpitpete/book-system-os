@@ -161,6 +161,7 @@ def _analyse_document(
     document: dict[str, Any],
     *,
     request_title: str,
+    request_language: str | None,
     source_bytes: int,
     normalised_bytes: int,
     normalisation_changed: bool,
@@ -273,7 +274,7 @@ def _analyse_document(
             )
         )
 
-    if not _metadata_value_present(metadata.get("lang")):
+    if not _metadata_value_present(metadata.get("lang")) and not (request_language or "").strip():
         warnings.append(
             _finding(
                 "language-metadata-missing",
@@ -284,6 +285,7 @@ def _analyse_document(
 
     summary: dict[str, object] = {
         "request_title": request_title.strip() or "Untitled",
+        "request_language": (request_language or "").strip() or None,
         "source_bytes": source_bytes,
         "normalised_bytes": normalised_bytes,
         "normalisation_changed": normalisation_changed,
@@ -361,7 +363,7 @@ def _parse_with_pandoc(markdown: str) -> tuple[dict[str, Any] | None, bool]:
     return document, bool(completed.stderr.strip())
 
 
-def validate_manuscript(*, title: str, markdown: str) -> dict[str, object]:
+def validate_manuscript(*, title: str, markdown: str, language: str | None = None) -> dict[str, object]:
     source_bytes = len(markdown.encode("utf-8"))
     manuscript_limit = max_manuscript_bytes()
     if source_bytes > manuscript_limit:
@@ -390,6 +392,7 @@ def validate_manuscript(*, title: str, markdown: str) -> dict[str, object]:
             "warnings": warnings,
             "summary": {
                 "request_title": title.strip() or "Untitled",
+                "request_language": (language or "").strip() or None,
                 "source_bytes": source_bytes,
                 "normalised_bytes": 0,
                 "normalisation_changed": bool(markdown),
@@ -421,6 +424,7 @@ def validate_manuscript(*, title: str, markdown: str) -> dict[str, object]:
         )
         summary = {
             "request_title": title.strip() or "Untitled",
+            "request_language": (language or "").strip() or None,
             "source_bytes": source_bytes,
             "normalised_bytes": len(cleaned.encode("utf-8")),
             "normalisation_changed": cleaned != markdown,
@@ -441,6 +445,7 @@ def validate_manuscript(*, title: str, markdown: str) -> dict[str, object]:
         analysed_warnings, summary = _analyse_document(
             document,
             request_title=title,
+            request_language=language,
             source_bytes=source_bytes,
             normalised_bytes=len(cleaned.encode("utf-8")),
             normalisation_changed=cleaned != markdown,

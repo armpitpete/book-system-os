@@ -20,6 +20,7 @@ from app.services.provenance import (
     build_source_identity,
     verify_job_source,
 )
+from app.services.publishing_metadata import build_publishing_metadata
 from app.services.resource_limits import check_job_admission
 from app.utils.atomic_files import atomic_write_json
 from app.utils.paths import jobs_dir
@@ -326,8 +327,10 @@ def create_job(
     markdown: str,
     state: str = DEFAULT_JOB_STATE,
     control_record: Mapping[str, Any] | ControlledSourceRecord | None = None,
+    language: str | None = None,
 ) -> tuple[str, Path]:
     source_identity = build_source_identity(markdown, control_record)
+    publishing_metadata = build_publishing_metadata(title=title, language=language)
     asset_records = referenced_author_assets(markdown)
     asset_bytes = referenced_author_asset_bytes(asset_records)
     check_job_admission(markdown, additional_bytes=asset_bytes)
@@ -353,6 +356,7 @@ def create_job(
             "created_at": utc_now(),
             "source_identity": source_identity,
             "author_assets": asset_provenance,
+            "publishing_metadata": publishing_metadata,
         }
         atomic_write_json(job_dir / "metadata.json", meta)
         (input_dir / "book.md").write_bytes(markdown.encode("utf-8"))

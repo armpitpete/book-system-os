@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   export-regression:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -97,4 +97,4 @@ jobs:
           name: h08-regression-evidence
           path: artifacts
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 1

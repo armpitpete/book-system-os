@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   stable-core:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -65,4 +65,4 @@ jobs:
           name: stable-core-failure-evidence
           path: artifacts/pytest-core.log
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

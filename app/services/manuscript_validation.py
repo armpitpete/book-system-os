@@ -321,6 +321,8 @@ def _parse_with_pandoc(markdown: str) -> tuple[dict[str, Any] | None, bool]:
             input=markdown,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             timeout=timeout,
             check=False,
         )

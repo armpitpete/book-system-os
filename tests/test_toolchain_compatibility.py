@@ -405,6 +405,43 @@ def test_validation_has_no_unsandboxed_fallback(
     ]]
 
 
+def test_validation_binds_pandoc_text_streams_to_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+    document = json.dumps(
+        {
+            "pandoc-api-version": [1, 23],
+            "meta": {},
+            "blocks": [],
+        },
+        ensure_ascii=False,
+    )
+
+    def fake_run(command, **kwargs):
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=document,
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "app.services.manuscript_validation.subprocess.run",
+        fake_run,
+    )
+
+    parsed, parser_warning = _parse_with_pandoc("# Café — Māori\n")
+
+    assert parsed is not None
+    assert parser_warning is False
+    assert observed["input"] == "# Café — Māori\n"
+    assert observed["text"] is True
+    assert observed["encoding"] == "utf-8"
+    assert observed["errors"] == "strict"
+
+
 def test_real_installed_pandoc_performs_sandboxed_validation() -> None:
     capability = probe_pandoc_sandbox()
     assert capability.compatible is True, capability

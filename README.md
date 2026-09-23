@@ -184,7 +184,11 @@ The preserved pre-implementation baseline, authority map, migration doctrine and
 - `docs/PHASE_0_BASELINE_PRESERVATION.md`
 - `docs/PHASE_0_GAP_MATRIX.md`
 
-That document is a **frozen future-direction authority**, not an implemented-product claim. It does not alter Current Product Contract v1, the current four-format production contract, production deployment state or any readiness claim.
+The implemented renderer-independent Phase 1 contract is recorded in:
+
+- `docs/PUBLICATION_MODEL_V0_1.md`
+
+That future-direction authority and each implemented phase remain separate from Current Product Contract v1 unless an explicit replacement gate is accepted. It does not alter Current Product Contract v1, the current four-format production contract, production deployment state or any readiness claim.
 
 ## Future priority
 

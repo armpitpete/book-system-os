@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "name": "minimal-one-chapter",
+      "expected_accepted": true,
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "title": "One", "markdown": "# One\n\nHello world.\n"}
+      ]
+    },
+    {
+      "name": "normal-multi-chapter",
+      "expected_accepted": true,
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "title": "One", "markdown": "# One\n\nFirst chapter.\n"},
+        {"id": "ch2", "role": "chapter", "matter": "body", "title": "Two", "markdown": "# Two\n\nSecond chapter.\n"}
+      ]
+    },
+    {
+      "name": "front-matter",
+      "expected_accepted": true,
+      "units": [
+        {"id": "title", "role": "title_page", "matter": "front", "markdown": ""},
+        {"id": "copyright", "role": "copyright", "matter": "front", "markdown": ""},
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\nBody.\n"}
+      ]
+    },
+    {
+      "name": "back-matter",
+      "expected_accepted": true,
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\nBody.\n"},
+        {"id": "thanks", "role": "acknowledgements", "matter": "back", "markdown": "# Acknowledgements\n\nThanks.\n"}
+      ]
+    },
+    {
+      "name": "images",
+      "expected_accepted": true,
+      "assets": [
+        {"id": "figure-one", "source_path": "images/figure-one.png", "media_type": "image/png", "width_px": 1200, "height_px": 800, "alt_text": "Diagram", "caption": "A diagram.", "placement": "block"}
+      ],
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\n![Diagram](asset:figure-one)\n"}
+      ]
+    },
+    {
+      "name": "notes",
+      "expected_accepted": true,
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\nClaim.[^n1]\n\n[^n1]: Source note.\n"},
+        {"id": "notes", "role": "notes", "matter": "back", "markdown": "# Notes\n\nCollected notes.\n"}
+      ]
+    },
+    {
+      "name": "nested-sections",
+      "expected_accepted": true,
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\nLead.\n"},
+        {"id": "sec1", "role": "section", "matter": "body", "parent_id": "ch1", "markdown": "## Detail\n\nMore.\n"}
+      ]
+    },
+    {
+      "name": "short-chapbook",
+      "expected_accepted": true,
+      "repeat_words": 600,
+      "intent": {"trim_size": "A7", "binding": "saddle_stitch", "fixed_page_count": 8}
+    },
+    {
+      "name": "fixed-page-publication",
+      "expected_accepted": true,
+      "repeat_words": 1200,
+      "intent": {"trim_size": "A7", "binding": "saddle_stitch", "fixed_page_count": 16}
+    },
+    {
+      "name": "impossible-a7-90000",
+      "expected_accepted": false,
+      "repeat_words": 90000,
+      "intent": {"trim_size": "A7", "binding": "saddle_stitch", "fixed_page_count": 16},
+      "expected_code": "fixed-page-capacity-exceeded"
+    },
+    {
+      "name": "missing-asset",
+      "expected_accepted": false,
+      "units": [
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\n![Missing](asset:not-declared)\n"}
+      ],
+      "expected_code": "content-asset-reference-missing"
+    },
+    {
+      "name": "malformed-metadata",
+      "expected_accepted": false,
+      "metadata": {"title": "", "creators": ["Author"], "language": "en-GB"},
+      "expected_code": "publication-title-required"
+    },
+    {
+      "name": "invalid-content-order",
+      "expected_accepted": false,
+      "units": [
+        {"id": "thanks", "role": "acknowledgements", "matter": "back", "markdown": "# Thanks\n\nThanks.\n"},
+        {"id": "ch1", "role": "chapter", "matter": "body", "markdown": "# One\n\nBody.\n"}
+      ],
+      "expected_code": "content-matter-order-invalid"
+    }
+  ]
+}

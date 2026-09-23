@@ -173,6 +173,14 @@ Later merged implementation is not automatically deployed. Production remains at
 
 This is a production-engine acceptance statement, not a claim that a substantial real book has passed human publication/print acceptance.
 
+## Future composition direction
+
+The agreed future architecture for guided book input, Book Input Contract v0.1, explanation-first design choices, evidence-backed geometry, publication feasibility, bookmaking mechanics, Affinity integration, imposition and later publication-family expansion is recorded in:
+
+- `docs/PUBLICATION_COMPOSITION_DIRECTION_V0_1.md`
+
+That document is a **frozen future-direction authority**, not an implemented-product claim. It does not alter Current Product Contract v1, the current four-format production contract, production deployment state or any readiness claim.
+
 ## Future priority
 
 Book System OS remains a stronger **publishing engine** than **author-facing product**. Repository-owned production preflight and Author Asset Workspace v0.1 close two previously identified gaps; the next evidence lanes are:

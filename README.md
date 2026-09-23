@@ -179,6 +179,11 @@ The agreed future architecture for guided book input, Book Input Contract v0.1, 
 
 - `docs/PUBLICATION_COMPOSITION_DIRECTION_V0_1.md`
 
+The preserved pre-implementation baseline, authority map, migration doctrine and gap matrix are recorded in:
+
+- `docs/PHASE_0_BASELINE_PRESERVATION.md`
+- `docs/PHASE_0_GAP_MATRIX.md`
+
 That document is a **frozen future-direction authority**, not an implemented-product claim. It does not alter Current Product Contract v1, the current four-format production contract, production deployment state or any readiness claim.
 
 ## Future priority

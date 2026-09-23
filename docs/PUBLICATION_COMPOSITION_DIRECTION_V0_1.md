@@ -339,30 +339,37 @@ The exact bridge mechanism and native-document workflow must be proven against t
 
 Affinity scripting is currently treated as an emerging/beta dependency. Book System OS must not become unable to produce accepted text-led publications merely because Affinity automation is unavailable.
 
-## 13. Renderer responsibility
+## 13. Renderer responsibility and retirement
 
-Long-term, Book System OS should own **design and assurance**, while specialist engines own final rendering where that reduces duplicated engineering.
+Book System OS owns **content, structure, design resolution, feasibility and assurance**. Affinity is the intended future composition engine.
 
-Potential target state:
+The target architecture is deliberately simple:
 
-- Affinity for advanced print composition and, if proven, PDF/EPUB export;
-- existing/Pandoc path retained where it remains stronger or necessary;
-- DOCX retained through an appropriate semantic conversion path unless Affinity later proves a suitable equivalent;
-- canonical Markdown retained regardless of output renderer.
+```text
+Guided input
+-> canonical BOS Markdown
+-> BOS semantic publication model
+-> feasibility + frozen design profile
+-> BOS Affinity Bridge
+-> Affinity document
+-> required publication exports
+```
 
-Existing PDF/ND-PDF/EPUB/DOCX production must not be deleted merely because Affinity can export some of those formats.
+Pandoc, Lua rendering filters and XeLaTeX are **transitional current-engine dependencies only**. They are not part of the intended steady-state architecture and future contracts must not be designed around preserving them.
 
-A renderer may be retired only after controlled same-source comparison demonstrates equal or better:
+They remain temporarily because Current Product Contract v1 depends on them. Once the Affinity route has demonstrated replacement of each required current duty, the superseded implementation and its tests/configuration should be removed rather than retained as a permanent parallel stack.
 
-- structural fidelity;
-- accessibility;
-- navigation;
-- deterministic/reproducible behaviour;
-- metadata;
-- asset handling;
-- production quality;
-- validation;
-- operational reliability.
+The retirement gate must demonstrate, as applicable:
+
+- canonical BOS Markdown no longer depends on Pandoc interpretation for its semantics;
+- Affinity construction covers required fixed-layout composition;
+- required PDF/EPUB production is proven through the new route;
+- any still-required editable/document interchange output has an explicit replacement path;
+- structural fidelity, accessibility, navigation, metadata and asset handling meet the accepted contracts;
+- provenance and readiness evidence bind the new renderer identity correctly;
+- real-book regression and human proof pass.
+
+Until that gate passes, removal is prohibited because it would break the accepted current product. After that gate passes, retention requires a new demonstrated need; “fallback just in case” is not sufficient.
 
 ## 14. Anti-drift and provenance
 
@@ -441,8 +448,8 @@ Keep the implementation stack small:
 - **Markdown** — canonical publication content;
 - **HTML/CSS** — guided UI and digital presentation;
 - **JavaScript** — bounded interactive UI and Affinity scripting/bridge where justified;
-- **Lua/Pandoc** — bounded semantic transformations where still useful;
-- **LaTeX/XeLaTeX** — existing deterministic text-led PDF path until a replacement is proven;
+- **Affinity JavaScript/SDK bridge** — intended future composition implementation;
+- **Pandoc/Lua/XeLaTeX** — transitional legacy implementation only until the Affinity replacement gate passes; not future architectural dependencies;
 - **JSON/YAML** — machine configuration/evidence where appropriate, not a second author-facing manuscript language.
 
 Do not introduce additional backend languages without a demonstrated problem the existing stack cannot solve.
@@ -480,7 +487,7 @@ The next bounded programme is:
 9. prove current renderer implementation against real books;
 10. run a bounded Affinity SDK feasibility spike;
 11. build Affinity bridge only for demonstrated supported operations;
-12. compare Affinity PDF/EPUB with current accepted routes before retiring any renderer;
+12. prove the Affinity route replaces each required Pandoc/Lua/XeLaTeX duty, then remove superseded legacy rendering code and dependencies;
 13. add imposition as a separate later layer;
 14. add advanced graphical integration only after text-led composition is stable;
 15. expand into additional publication families only through real acceptance cases.
@@ -532,7 +539,8 @@ The first implementation should not attempt to deliver:
 - every possible genre template;
 - every possible trim size;
 - automatic aesthetic judgement;
-- removal of the current four-format path before replacement evidence exists.
+- removal of current rendering infrastructure before replacement evidence exists;
+- permanent maintenance of duplicate Pandoc/XeLaTeX and Affinity production stacks after the replacement gate has passed.
 
 ## Final principle
 

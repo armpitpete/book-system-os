@@ -65,7 +65,12 @@ def atomic_write_text(
     except FileNotFoundError:
         pass
 
-    final_mode = mode if mode is not None else existing_mode or DEFAULT_FILE_MODE
+    if mode is not None:
+        final_mode = mode
+    elif existing_mode is not None:
+        final_mode = existing_mode
+    else:
+        final_mode = DEFAULT_FILE_MODE
     descriptor, temporary_name = tempfile.mkstemp(
         dir=target.parent,
         prefix=f".{target.name}.",
